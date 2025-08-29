@@ -14,10 +14,9 @@
       a { color: #9cf; }
       .spacer { flex: 1; }
     </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js" referrerpolicy="no-referrer" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js" referrerpolicy="no-referrer"></script>
     <script>
-      // Configure PDF.js worker
-      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.worker.min.js';
+      // Will set the worker src after pdfjsLib is available
       let currentRenderTask = null;
       let resizeTimer = null;
 
@@ -123,6 +122,9 @@
       }
 
       window.addEventListener('DOMContentLoaded', () => {
+        if (window.pdfjsLib) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.worker.min.js';
+        }
         const { file, page, section } = getParams();
         render({ file, page, section });
 
