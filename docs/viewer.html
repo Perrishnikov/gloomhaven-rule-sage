@@ -8,6 +8,7 @@
       html, body { height: 100%; margin: 0; background: #111; color: #eee; }
       .bar { display: flex; gap: 12px; align-items: center; padding: 10px; background: #1b1b1b; position: sticky; top: 0; z-index: 1; }
       .bar input { width: 56px; }
+      .src { max-width: min(70vw, 900px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.9; }
       #container { display: flex; justify-content: center; padding: 10px; }
       #canvas { max-width: 100%; width: 100%; height: auto; background: #222; }
       .msg { padding: 16px; }
@@ -102,11 +103,13 @@
             const last = u.pathname.split('/').pop() || '';
             const name = decodeURIComponent(last);
             const label = section ? `${name} — Page ${page} — Section: ${section}` : `${name} — Page ${page}`;
-            document.getElementById('file').textContent = label;
+            const srcEl = document.getElementById('source');
+            if (srcEl) { srcEl.textContent = label; srcEl.title = decoded; }
           } catch (_) {
             // Fallback to raw file string
             const label = section ? `${file} — Page ${page} — Section: ${section}` : `${file} — Page ${page}`;
-            document.getElementById('file').textContent = label;
+            const srcEl = document.getElementById('source');
+            if (srcEl) { srcEl.textContent = label; srcEl.title = file; }
           }
         } catch (e) {
           console.error(e);
@@ -169,6 +172,7 @@
   <body>
     <div class="bar">
       <strong style="white-space:nowrap;">PDF Viewer</strong>
+      <span id="source" class="src" title=""></span>
       <span class="spacer"></span>
       <button id="prev" title="Previous Page">◀</button>
       <label>Page <input id="page" type="number" min="1" step="1" value="1" /></label>
@@ -176,6 +180,6 @@
     </div>
     <div id="msg" class="msg"></div>
     <div id="container"><canvas id="canvas"></canvas></div>
-    <div class="msg">Source: <span id="file"></span></div>
+    
   </body>
   </html>
