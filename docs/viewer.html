@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PDF Viewer</title>
+    <style>
+      html, body { height: 100%; margin: 0; background: #111; color: #eee; }
+      .bar { display: flex; gap: 12px; align-items: center; padding: 10px; background: #1b1b1b; position: sticky; top: 0; z-index: 1; }
+      .bar input { width: 56px; }
+      #container { display: flex; justify-content: center; padding: 10px; }
+      #canvas { max-width: 100%; width: 100%; height: auto; background: #222; }
+      .msg { padding: 16px; }
+      a { color: #9cf; }
+      .spacer { flex: 1; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js" integrity="sha512-wmYpQ0H6hI1g3bR2hE8wT7SsPZzq1w8fIEbFQm8mD7pQAdYh1Yj5JSfEtZ2Y6wlvS0fR0C2S8aQeBfG7TnYVZA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script>
+      // Configure PDF.js worker
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.worker.min.js';
+
+      function getParams() {
+        const url = new URL(window.location.href);
+        const file = url.searchParams.get('file');
+        // Support both #page= and ?page=
+        let page = parseInt(url.searchParams.get('page') || '', 10);
+        if (!Number.isFinite(page)) {
+          const m = (url.hash || '').match(/page=(\d+)/);
+          if (m) page = parseInt(m[1], 10);
+        }
+        return { file, page: Number.isFinite(page) ? page : 1 };
+      }
+
+      async function render({ file, page }) {
+        const msg = document.getElementById('msg');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!file) {
+          msg.innerHTML = 'Missing \'file\' query param. Example: <code>viewer.html?file=' +
+            encodeURIComponent('https://raw.githubusercontent.com/owner/repo/branch/path/to.pdf') + '#page=2</code>';
+          return;
+        }
+        msg.textContent = 'Loading…';
+        try {
+          const pdf = await pdfjsLib.getDocument({ url: file, withCredentials: false }).promise;
+          const total = pdf.numPages;
+          const clamped = Math.min(Math.max(1, page), total);
+          const p = await pdf.getPage(clamped);
+          const viewport = p.getViewport({ scale: 1 });
+
+          // Fit to device width with some margin
+          const dpiScale = window.devicePixelRatio || 1;
+          const targetWidthCSS = Math.min(window.innerWidth - 20, 1200);
+          const scale = targetWidthCSS / viewport.width;
+          const v2 = p.getViewport({ scale });
+
+          canvas.width = Math.floor(v2.width * dpiScale);
+          canvas.height = Math.floor(v2.height * dpiScale);
+          canvas.style.width = Math.floor(v2.width) + 'px';
+          canvas.style.height = Math.floor(v2.height) + 'px';
+
+          await p.render({ canvasContext: ctx, viewport: p.getViewport({ scale: scale * dpiScale }) }).promise;
+          msg.textContent = '';
+
+          // Update controls
+          document.getElementById('page').value = clamped;
+          document.getElementById('total').textContent = total;
+        } catch (e) {
+          console.error(e);
+          msg.innerHTML = 'Failed to load PDF. Ensure the URL is publicly accessible.\n' +
+            '<div class="msg">Tried: <a href="' + file + '">' + file + '</a></div>';
+        }
+      }
+
+      function setHashPage(page) {
+        const url = new URL(window.location.href);
+        url.hash = '#page=' + page;
+        history.replaceState(null, '', url);
+      }
+
+      window.addEventListener('DOMContentLoaded', () => {
+        const { file, page } = getParams();
+        if (file) document.getElementById('file').textContent = file;
+        render({ file, page });
+
+        document.getElementById('prev').addEventListener('click', () => {
+          const p = Math.max(1, parseInt(document.getElementById('page').value, 10) - 1);
+          document.getElementById('page').value = p;
+          setHashPage(p);
+          render({ file: getParams().file, page: p });
+        });
+        document.getElementById('next').addEventListener('click', () => {
+          const p = Math.min(parseInt(document.getElementById('total').textContent, 10), parseInt(document.getElementById('page').value, 10) + 1);
+          document.getElementById('page').value = p;
+          setHashPage(p);
+          render({ file: getParams().file, page: p });
+        });
+        document.getElementById('page').addEventListener('change', (e) => {
+          let p = parseInt(e.target.value, 10);
+          if (!Number.isFinite(p) || p < 1) p = 1;
+          setHashPage(p);
+          render({ file: getParams().file, page: p });
+        });
+
+        window.addEventListener('resize', () => {
+          const p = parseInt(document.getElementById('page').value, 10) || 1;
+          render({ file: getParams().file, page: p });
+        });
+      });
+    </script>
+  </head>
+  <body>
+    <div class="bar">
+      <strong style="white-space:nowrap;">PDF Viewer</strong>
+      <span class="spacer"></span>
+      <button id="prev" title="Previous Page">◀</button>
+      <label>Page <input id="page" type="number" min="1" step="1" value="1" /></label>
+      <span>/ <span id="total">?</span></span>
+    </div>
+    <div id="msg" class="msg"></div>
+    <div id="container"><canvas id="canvas"></canvas></div>
+    <div class="msg">Source: <span id="file"></span></div>
+  </body>
+  </html>
+
