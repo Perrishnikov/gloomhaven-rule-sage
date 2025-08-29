@@ -28,10 +28,16 @@
           const m = (url.hash || '').match(/page=(\d+)/);
           if (m) page = parseInt(m[1], 10);
         }
-        return { file, page: Number.isFinite(page) ? page : 1 };
+        // Optional section from query or hash
+        let section = url.searchParams.get('section') || '';
+        if (!section) {
+          const sm = (url.hash || '').match(/section=([^&#]+)/);
+          if (sm) section = decodeURIComponent(sm[1]);
+        }
+        return { file, page: Number.isFinite(page) ? page : 1, section };
       }
 
-      async function render({ file, page }) {
+      async function render({ file, page, section }) {
         const msg = document.getElementById('msg');
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
@@ -44,8 +50,25 @@
         try {
           const pdf = await pdfjsLib.getDocument({ url: file, withCredentials: false }).promise;
           const total = pdf.numPages;
-          const clamped = Math.min(Math.max(1, page), total);
-          const p = await pdf.getPage(clamped);
+
+          // Try to align by printed page labels if available
+          let target = Math.min(Math.max(1, page), total);
+          try {
+            const labels = await pdf.getPageLabels();
+            if (labels && labels.length === total) {
+              const desired = String(page);
+              // Match numeric labels, ignoring non-digits (e.g., roman numerals are skipped)
+              const desiredNum = parseInt(desired, 10);
+              if (Number.isFinite(desiredNum)) {
+                for (let i = 0; i < labels.length; i++) {
+                  const num = parseInt(String(labels[i]).replace(/[^0-9]/g, ''), 10);
+                  if (num === desiredNum) { target = i + 1; break; }
+                }
+              }
+            }
+          } catch (_) { /* ignore label lookup issues */ }
+
+          const p = await pdf.getPage(target);
           const viewport = p.getViewport({ scale: 1 });
 
           // Fit to device width with some margin
@@ -63,8 +86,22 @@
           msg.textContent = '';
 
           // Update controls
-          document.getElementById('page').value = clamped;
+          document.getElementById('page').value = target;
           document.getElementById('total').textContent = total;
+
+          // Update source display: show filename, page and optional section
+          try {
+            const decoded = decodeURIComponent(file);
+            const u = new URL(decoded);
+            const last = u.pathname.split('/').pop() || '';
+            const name = decodeURIComponent(last);
+            const label = section ? `${name} — Page ${page} — Section: ${section}` : `${name} — Page ${page}`;
+            document.getElementById('file').textContent = label;
+          } catch (_) {
+            // Fallback to raw file string
+            const label = section ? `${file} — Page ${page} — Section: ${section}` : `${file} — Page ${page}`;
+            document.getElementById('file').textContent = label;
+          }
         } catch (e) {
           console.error(e);
           msg.innerHTML = 'Failed to load PDF. Ensure the URL is publicly accessible.\n' +
@@ -79,32 +116,35 @@
       }
 
       window.addEventListener('DOMContentLoaded', () => {
-        const { file, page } = getParams();
-        if (file) document.getElementById('file').textContent = file;
-        render({ file, page });
+        const { file, page, section } = getParams();
+        render({ file, page, section });
 
         document.getElementById('prev').addEventListener('click', () => {
           const p = Math.max(1, parseInt(document.getElementById('page').value, 10) - 1);
           document.getElementById('page').value = p;
           setHashPage(p);
-          render({ file: getParams().file, page: p });
+          const gp = getParams();
+          render({ file: gp.file, page: p, section: gp.section });
         });
         document.getElementById('next').addEventListener('click', () => {
           const p = Math.min(parseInt(document.getElementById('total').textContent, 10), parseInt(document.getElementById('page').value, 10) + 1);
           document.getElementById('page').value = p;
           setHashPage(p);
-          render({ file: getParams().file, page: p });
+          const gp = getParams();
+          render({ file: gp.file, page: p, section: gp.section });
         });
         document.getElementById('page').addEventListener('change', (e) => {
           let p = parseInt(e.target.value, 10);
           if (!Number.isFinite(p) || p < 1) p = 1;
           setHashPage(p);
-          render({ file: getParams().file, page: p });
+          const gp = getParams();
+          render({ file: gp.file, page: p, section: gp.section });
         });
 
         window.addEventListener('resize', () => {
           const p = parseInt(document.getElementById('page').value, 10) || 1;
-          render({ file: getParams().file, page: p });
+          const gp = getParams();
+          render({ file: gp.file, page: p, section: gp.section });
         });
       });
     </script>
