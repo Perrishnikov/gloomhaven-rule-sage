@@ -14,10 +14,12 @@
       a { color: #9cf; }
       .spacer { flex: 1; }
     </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js" referrerpolicy="no-referrer" defer></script>
     <script>
       // Configure PDF.js worker
       pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.worker.min.js';
+      let currentRenderTask = null;
+      let resizeTimer = null;
 
       function getParams() {
         const url = new URL(window.location.href);
@@ -82,7 +84,12 @@
           canvas.style.width = Math.floor(v2.width) + 'px';
           canvas.style.height = Math.floor(v2.height) + 'px';
 
-          await p.render({ canvasContext: ctx, viewport: p.getViewport({ scale: scale * dpiScale }) }).promise;
+          // Cancel any in-flight render on the same canvas
+          if (currentRenderTask && typeof currentRenderTask.cancel === 'function') {
+            try { currentRenderTask.cancel(); } catch (_) {}
+          }
+          currentRenderTask = p.render({ canvasContext: ctx, viewport: p.getViewport({ scale: scale * dpiScale }) });
+          try { await currentRenderTask.promise; } catch (_) { /* cancelled */ }
           msg.textContent = '';
 
           // Update controls
@@ -119,21 +126,26 @@
         const { file, page, section } = getParams();
         render({ file, page, section });
 
-        document.getElementById('prev').addEventListener('click', () => {
-          const p = Math.max(1, parseInt(document.getElementById('page').value, 10) - 1);
-          document.getElementById('page').value = p;
+        const prevBtn = document.getElementById('prev');
+        const nextBtn = document.getElementById('next');
+        const pageInput = document.getElementById('page');
+
+        if (prevBtn) prevBtn.addEventListener('click', () => {
+          const p = Math.max(1, parseInt(pageInput.value, 10) - 1);
+          pageInput.value = p;
           setHashPage(p);
           const gp = getParams();
           render({ file: gp.file, page: p, section: gp.section });
         });
-        document.getElementById('next').addEventListener('click', () => {
-          const p = Math.min(parseInt(document.getElementById('total').textContent, 10), parseInt(document.getElementById('page').value, 10) + 1);
-          document.getElementById('page').value = p;
+        if (nextBtn) nextBtn.addEventListener('click', () => {
+          const total = parseInt(document.getElementById('total').textContent, 10) || 1;
+          const p = Math.min(total, (parseInt(pageInput.value, 10) || 1) + 1);
+          pageInput.value = p;
           setHashPage(p);
           const gp = getParams();
           render({ file: gp.file, page: p, section: gp.section });
         });
-        document.getElementById('page').addEventListener('change', (e) => {
+        if (pageInput) pageInput.addEventListener('change', (e) => {
           let p = parseInt(e.target.value, 10);
           if (!Number.isFinite(p) || p < 1) p = 1;
           setHashPage(p);
@@ -142,9 +154,12 @@
         });
 
         window.addEventListener('resize', () => {
-          const p = parseInt(document.getElementById('page').value, 10) || 1;
-          const gp = getParams();
-          render({ file: gp.file, page: p, section: gp.section });
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => {
+            const p = parseInt((document.getElementById('page')||{}).value, 10) || 1;
+            const gp = getParams();
+            render({ file: gp.file, page: p, section: gp.section });
+          }, 150);
         });
       });
     </script>
