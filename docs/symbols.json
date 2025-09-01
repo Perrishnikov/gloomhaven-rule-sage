@@ -1,0 +1,12 @@
+{
+  "slot:head": "Head",
+  "slot:body": "Body",
+  "slot:legs": "Legs",
+  "slot:one-hand": "One-Hand",
+  "slot:two-hand": "Two-Hand",
+  "slot:small": "Small Item",
+  "use:spent": "Spent",
+  "use:consumed": "Consumed",
+  "use:persistent": "Persistent"
+}
+
