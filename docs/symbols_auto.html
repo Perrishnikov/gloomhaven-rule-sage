@@ -67,6 +67,27 @@
         </div>
         <div id="out" class="list" style="margin-top:8px;"></div>
       </div>
+      
+      <div class="panel">
+        <h3>Build Templates from Key Image</h3>
+        <div class="row">
+          <input id="keyUrl" type="text" placeholder="Paste key image URL (e.g., rulebook page screenshot)" />
+          <button id="loadKey">Load key</button>
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <label>Icons in row <input id="iconsCount" type="number" min="1" step="1" value="6" style="width:64px;" /></label>
+          <label>Tokens (comma‑separated) <input id="tokensList" type="text" style="width:300px;" value="slot:head,slot:body,slot:legs,slot:one-hand,slot:two-hand,slot:small" /></label>
+        </div>
+        <canvas id="keyCanvas" width="600" height="260" style="width:100%;height:auto;background:#262626;display:block;margin-top:6px;"></canvas>
+        <div class="row" style="margin-top:6px;">
+          <button id="sliceRow" class="primary">Slice selection → templates</button>
+          <button id="addFromKey">Add template from key selection…</button>
+        </div>
+        <div class="note" style="margin-top:6px;">
+          Draw a rectangle around the icon row on the key image, set count and tokens in order, then click “Slice selection → templates”.
+          For single symbols (e.g., Spent), draw a tight box over that icon and click “Add template from key selection…”.
+        </div>
+      </div>
     </div>
 
     <script>
@@ -83,6 +104,10 @@
         templates: [], // {token, imgData, w, h}
         selection: null,
         overlays: [], // [{x,y,w,h,color}]
+        key: {
+          img: null,
+          selection: null,
+        },
       };
 
       const $ = (id) => document.getElementById(id);
@@ -186,6 +211,72 @@
           out[j] = (data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114)|0;
         }
         return { w: width, h: height, d: out };
+      }
+
+      // ------------------ Key image helpers ------------------
+      async function loadKeyImage(url) {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = url;
+        });
+      }
+
+      function drawKeyCanvas() {
+        const c = $('keyCanvas'); const ctx = c.getContext('2d');
+        ctx.clearRect(0,0,c.width,c.height);
+        if (state.key.img) {
+          // Fit image into canvas preserving aspect ratio
+          const iw = state.key.img.naturalWidth; const ih = state.key.img.naturalHeight;
+          const scale = Math.min(c.width/iw, c.height/ih);
+          const w = Math.floor(iw*scale), h = Math.floor(ih*scale);
+          const x = Math.floor((c.width - w)/2), y = Math.floor((c.height - h)/2);
+          ctx.drawImage(state.key.img, x, y, w, h);
+        }
+        if (state.key.selection) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255,215,0,0.9)'; ctx.lineWidth = 2;
+          const s = state.key.selection; ctx.strokeRect(s.x, s.y, s.w, s.h);
+          ctx.restore();
+        }
+      }
+
+      function keyRectFromDrag(ev, start) {
+        const canvas = $('keyCanvas');
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.max(0, Math.min(canvas.width, Math.round((ev.clientX - rect.left) * (canvas.width/rect.width))));
+        const y = Math.max(0, Math.min(canvas.height, Math.round((ev.clientY - rect.top) * (canvas.height/rect.height))));
+        const w = Math.abs(x - start.x);
+        const h = Math.abs(y - start.y);
+        return { x: Math.min(x, start.x), y: Math.min(y, start.y), w, h };
+      }
+
+      function addTemplateFromKeySelection(token) {
+        const c = $('keyCanvas'); const ctx = c.getContext('2d');
+        const s = state.key.selection; if (!s || s.w<8 || s.h<8) { alert('Draw a selection on the key image first.'); return; }
+        const img = ctx.getImageData(s.x, s.y, s.w, s.h);
+        const tpl = { token, w: img.width, h: img.height, imgData: Array.from(img.data) };
+        state.templates.push(tpl); saveTemplates(); renderTplList(); msg(`Added template ${token}`);
+      }
+
+      function sliceSelectionIntoTemplates() {
+        const c = $('keyCanvas'); const ctx = c.getContext('2d');
+        const s = state.key.selection; if (!s || s.w<16 || s.h<16) { alert('Draw a selection around the icon row first.'); return; }
+        const count = Math.max(1, parseInt($('iconsCount').value,10)||6);
+        const tokens = ($('tokensList').value||'').split(',').map(x=>x.trim()).filter(Boolean);
+        if (tokens.length !== count) { alert(`Token count (${tokens.length}) must match icons in row (${count}).`); return; }
+        const sliceW = Math.floor(s.w / count);
+        const pad = Math.max(0, Math.floor(sliceW * 0.10)); // slight trim
+        for (let i=0;i<count;i++) {
+          const x = s.x + i*sliceW + pad;
+          const w = (i===count-1 ? (s.x + s.w) - x - pad : sliceW - 2*pad);
+          const img = ctx.getImageData(x, s.y + pad, Math.max(8,w), Math.max(8, s.h - 2*pad));
+          const tpl = { token: tokens[i], w: img.width, h: img.height, imgData: Array.from(img.data) };
+          state.templates.push(tpl);
+        }
+        saveTemplates(); renderTplList(); msg(`Added ${count} templates from key row.`);
       }
       function extractRegion(ctx, x, y, w, h) {
         const img = ctx.getImageData(x,y,w,h);
@@ -409,6 +500,40 @@
         $('detectAll').onclick = () => detectAllPagesCSV();
         $('clearTpl').onclick = () => { if (confirm('Clear all templates for this file?')) { state.templates=[]; saveTemplates(); renderTplList(); state.overlays=[]; state.selection=null; drawSelection(); } };
         $('clearRects').onclick = () => { state.overlays = []; state.selection = null; drawSelection(); };
+
+        // Key image wiring
+        $('loadKey').onclick = async () => {
+          try {
+            const u = $('keyUrl').value.trim();
+            if (!u) { msg('Enter a key image URL'); return; }
+            state.key.img = await loadKeyImage(u);
+            // Resize key canvas to image aspect while keeping a reasonable width
+            const kc = $('keyCanvas');
+            const targetW = Math.min(900, Math.max(400, kc.clientWidth||600));
+            const scale = targetW / state.key.img.naturalWidth;
+            kc.width = Math.floor(state.key.img.naturalWidth * scale);
+            kc.height = Math.floor(state.key.img.naturalHeight * scale);
+            state.key.selection = null;
+            drawKeyCanvas();
+            msg('Key image loaded');
+          } catch (e) {
+            console.error(e); msg('Failed to load key image (CORS or bad link)', 'err');
+          }
+        };
+        $('sliceRow').onclick = sliceSelectionIntoTemplates;
+        $('addFromKey').onclick = () => {
+          const token = prompt('Enter symbol token for this selection (e.g., use:spent):');
+          if (token) addTemplateFromKeySelection(token);
+        };
+
+        // Drag select on key canvas
+        let keyDrag = null;
+        $('keyCanvas').addEventListener('mousedown', (e) => {
+          const kc = $('keyCanvas'); const r = kc.getBoundingClientRect();
+          keyDrag = { x: Math.round((e.clientX-r.left)*(kc.width/r.width)), y: Math.round((e.clientY-r.top)*(kc.height/r.height)) };
+        });
+        window.addEventListener('mousemove', (e) => { if (!keyDrag) return; state.key.selection = keyRectFromDrag(e, keyDrag); drawKeyCanvas(); });
+        window.addEventListener('mouseup', () => { keyDrag = null; });
         $('addTpl').onclick = addTemplateFromSelection;
 
         // Drag to select
