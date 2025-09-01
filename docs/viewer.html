@@ -183,6 +183,7 @@
 
         // Auto-slice handling and slice config
         let usePrintedForDisplay = false;
+        if (Number.isFinite(printed)) usePrintedForDisplay = true; // honor explicit printed param
         let isSliceContext = false;
         let sliceBase = '';
         let sliceConfig = null;
