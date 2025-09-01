@@ -237,6 +237,24 @@
           }
         }
 
+        // Ensure printed page is derived from the slice filename when in slice context
+        if (isSliceContext) {
+          let derived = printed;
+          try {
+            if (!Number.isFinite(derived)) {
+              const u2 = new URL(file);
+              const last = decodeURIComponent(u2.pathname.split('/').pop() || '');
+              const re2 = regexFromPattern(sliceFilenamePattern || 'p{n}.pdf');
+              const m2 = last.match(re2) || last.match(/p(\d+)\.pdf$/);
+              if (m2) derived = parseInt(m2[1], 10);
+            }
+          } catch (_) {}
+          if (Number.isFinite(derived)) {
+            printed = derived;
+            usePrintedForDisplay = true;
+          }
+        }
+
         // For non-slice single PDFs, look for a sidecar config next to the file: <filename>.config.json
         if (!isSliceContext && file) {
           try {
@@ -308,7 +326,7 @@
           }
 
           // Update controls
-          let displayPage = usePrintedForDisplay && printed ? printed : target;
+          let displayPage = usePrintedForDisplay && Number.isFinite(printed) ? printed : target;
           // Respect page_label option for slices
           if (isSliceContext && slicePageLabel === 'index') displayPage = 1;
           const displayTotal = (isSliceContext && Number.isFinite(sliceMaxPages)) ? sliceMaxPages : (isSliceContext ? 82 : total);
@@ -328,13 +346,13 @@
             let name = decodeURIComponent(last);
             if (isSliceContext && sliceTitle) name = sliceTitle;
             if (!isSliceContext && fileConfig && typeof fileConfig.title === 'string') name = fileConfig.title;
-            const labelPage = (usePrintedForDisplay && printed) ? printed : page;
+            const labelPage = (usePrintedForDisplay && Number.isFinite(printed)) ? printed : page;
             const label = section ? `${name} — Page ${labelPage} — Section: ${section}` : `${name} — Page ${labelPage}`;
             const srcEl = document.getElementById('source');
             if (srcEl) { srcEl.textContent = label; srcEl.title = decoded; }
           } catch (_) {
             // Fallback to raw file string
-            const labelPage = (usePrintedForDisplay && printed) ? printed : page;
+            const labelPage = (usePrintedForDisplay && Number.isFinite(printed)) ? printed : page;
             const label = section ? `${file} — Page ${labelPage} — Section: ${section}` : `${file} — Page ${labelPage}`;
             const srcEl = document.getElementById('source');
             if (srcEl) { srcEl.textContent = label; srcEl.title = file; }
@@ -369,29 +387,10 @@
         const rightBtn = document.getElementById('right');
         const pageInput = document.getElementById('page');
 
-        // Keep input change behavior
+        // Keep input change behavior (no special clamping here; render handles slice ranges via config)
         if (pageInput) pageInput.addEventListener('change', (e) => {
           let p = parseInt(e.target.value, 10);
           if (!Number.isFinite(p) || p < 1) p = 1;
-          // Clamp for Rule Book slices to 1..82
-          const gp0 = getParams();
-          try {
-      function fileNameFromPattern(pattern, n) {
-        const p = (pattern || 'p{n}.pdf');
-        return p.replace('{n}', String(n));
-      }
-      function regexFromPattern(pattern) {
-        const p = (pattern || 'p{n}.pdf');
-        const esc = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const re = esc.replace('\\{n\\}', '(\\d+)');
-        return new RegExp(re + '$');
-      }
-            const dec = decodeURIComponent(gp0.file || '');
-            const RB_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule Book_2P V9.pdf';
-            const RB_SLICE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule%20Book_2P%20V9/';
-            const isRBSlice = dec.startsWith(RB_SLICE);
-            if (isRBSlice) p = Math.max(1, Math.min(82, p));
-          } catch(_) {}
           setHashPage(p);
           const gp = getParams();
           render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
