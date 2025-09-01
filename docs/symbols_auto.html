@@ -71,8 +71,9 @@
       <div class="panel">
         <h3>Build Templates from Key Image</h3>
         <div class="row">
-          <input id="keyUrl" type="text" placeholder="Paste key image URL (e.g., rulebook page screenshot)" />
-          <button id="loadKey">Load key</button>
+          <input id="keyUrl" type="text" placeholder="Paste key image URL (or use a local file)" />
+          <button id="loadKey">Load URL</button>
+          <input id="keyFile" type="file" accept="image/*" />
         </div>
         <div class="row" style="margin-top:6px;">
           <label>Icons in row <input id="iconsCount" type="number" min="1" step="1" value="6" style="width:64px;" /></label>
@@ -220,6 +221,16 @@
           img.crossOrigin = 'anonymous';
           img.onload = () => resolve(img);
           img.onerror = reject;
+          img.src = url;
+        });
+      }
+
+      async function loadKeyFromFile(file) {
+        return new Promise((resolve, reject) => {
+          const url = URL.createObjectURL(file);
+          const img = new Image();
+          img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+          img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
           img.src = url;
         });
       }
@@ -520,6 +531,45 @@
             console.error(e); msg('Failed to load key image (CORS or bad link)', 'err');
           }
         };
+        $('keyFile').addEventListener('change', async (e) => {
+          const f = e.target.files && e.target.files[0];
+          if (!f) return;
+          try {
+            state.key.img = await loadKeyFromFile(f);
+            const kc = $('keyCanvas');
+            const targetW = Math.min(900, Math.max(400, kc.clientWidth||600));
+            const scale = targetW / state.key.img.naturalWidth;
+            kc.width = Math.floor(state.key.img.naturalWidth * scale);
+            kc.height = Math.floor(state.key.img.naturalHeight * scale);
+            state.key.selection = null;
+            drawKeyCanvas();
+            msg('Loaded key image from local file');
+          } catch (err) {
+            console.error(err); msg('Failed to load local image file', 'err');
+          }
+        });
+
+        // Optional: drag & drop image onto the key canvas
+        const kcDrop = $('keyCanvas');
+        kcDrop.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+        kcDrop.addEventListener('drop', async (e) => {
+          e.preventDefault();
+          const file = e.dataTransfer.files && e.dataTransfer.files[0];
+          if (!file || !file.type.startsWith('image/')) { msg('Drop an image file', 'err'); return; }
+          try {
+            state.key.img = await loadKeyFromFile(file);
+            const kc = $('keyCanvas');
+            const targetW = Math.min(900, Math.max(400, kc.clientWidth||600));
+            const scale = targetW / state.key.img.naturalWidth;
+            kc.width = Math.floor(state.key.img.naturalWidth * scale);
+            kc.height = Math.floor(state.key.img.naturalHeight * scale);
+            state.key.selection = null;
+            drawKeyCanvas();
+            msg('Loaded key image by drag & drop');
+          } catch (err) {
+            console.error(err); msg('Failed to load dropped image', 'err');
+          }
+        });
         $('sliceRow').onclick = sliceSelectionIntoTemplates;
         $('addFromKey').onclick = () => {
           const token = prompt('Enter symbol token for this selection (e.g., use:spent):');
