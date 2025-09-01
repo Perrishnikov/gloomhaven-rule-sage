@@ -42,23 +42,31 @@
       function normalizeFile(file) {
         try {
           const decoded = decodeURIComponent(file);
-          const mappings = [
-            {
-              from: 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/citation_links/Rule%20Book_2P%20V9.pdf',
-              to:   'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule%20Book_2P%20V9.pdf',
-            },
-            {
-              from: 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/citation_links/Official%20FAQ%20for%20Game%20(no%20rules%20questions%20please)%20_%20BoardGameGeek.pdf',
-              to:   'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_title/Official%20FAQ%20for%20Game%20(no%20rules%20questions%20please)%20_%20BoardGameGeek.pdf',
-            },
-            {
-              from: 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/citation_links/Gloomhaven%20Items.pdf',
-              to:   'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_card/Gloomhaven%20Items.pdf',
-            },
-          ];
-          for (const m of mappings) {
-            if (decoded === m.from) return m.to;
+          let out = decoded;
+          // Exact file remaps from legacy folder
+          const exact = new Map([
+            ['https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/citation_links/Rule%20Book_2P%20V9.pdf',
+             'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule%20Book_2P%20V9.pdf'],
+            ['https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/citation_links/Official%20FAQ%20for%20Game%20(no%20rules%20questions%20please)%20_%20BoardGameGeek.pdf',
+             'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_title/Official%20FAQ%20for%20Game%20(no%20rules%20questions%20please)%20_%20BoardGameGeek.pdf'],
+            ['https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/citation_links/Gloomhaven%20Items.pdf',
+             'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_card/Gloomhaven%20Items.pdf'],
+          ]);
+          if (exact.has(out)) return exact.get(out);
+          // Folder remaps (broad): manuals -> by_page, items -> by_card, citation_links -> by_* best-effort
+          out = out.replace('/files/manuals/', '/files/by_page/');
+          out = out.replace('/files/items/', '/files/by_card/');
+          // citation_links best-effort: try to infer by filename
+          if (out.includes('/citation_links/')) {
+            if (out.endsWith('Rule%20Book_2P%20V9.pdf') || out.endsWith('Rule Book_2P V9.pdf')) {
+              out = out.replace('/citation_links/', '/files/by_page/');
+            } else if (out.includes('Official%20FAQ') || out.includes('Official FAQ')) {
+              out = out.replace('/citation_links/', '/files/by_title/');
+            } else if (out.includes('Gloomhaven%20Items.pdf') || out.includes('Gloomhaven Items.pdf')) {
+              out = out.replace('/citation_links/', '/files/by_card/');
+            }
           }
+          return out;
         } catch (_) { /* ignore */ }
         return file;
       }
