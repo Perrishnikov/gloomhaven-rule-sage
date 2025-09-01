@@ -28,7 +28,7 @@
   <body>
     <div class="bar">
       <strong>Card Symbols Auto-Indexer</strong>
-      <input id="file" type="text" placeholder="Enter raw PDF URL (by_card)" />
+      <input id="file" type="text" placeholder="Paste viewer link or raw PDF URL (by_card)" />
       <button id="load" class="primary">Load</button>
       <span id="msg" class="note"></span>
     </div>
@@ -56,6 +56,10 @@
           <button id="clearTpl">Clear templates</button>
           <span class="note">Draw a rectangle on the footer area, then click “Add template”.</span>
         </div>
+        <div class="row" style="margin-top:6px;">
+          <button id="clearRects">Clear rectangles</button>
+          <span class="note">Clears all current selection and match overlays (footer guide remains).</span>
+        </div>
         <div id="tplList" class="list"></div>
         <div class="row" style="margin-top:8px;">
           <button id="detectPage" class="primary">Detect on this page</button>
@@ -78,6 +82,7 @@
         file: '',
         templates: [], // {token, imgData, w, h}
         selection: null,
+        overlays: [], // [{x,y,w,h,color}]
       };
 
       const $ = (id) => document.getElementById(id);
@@ -133,8 +138,22 @@
         return u;
       }
 
+      function extractFileFromViewer(u) {
+        try {
+          const url = new URL(u);
+          if (url.searchParams.has('file')) {
+            const f = url.searchParams.get('file');
+            if (f) return decodeURIComponent(f);
+          }
+        } catch (_) {}
+        return '';
+      }
+
       function normalizeUrl(u) {
-        let out = u.trim();
+        let out = (u || '').trim();
+        // If user pasted the viewer URL, extract the ?file param
+        const fromViewer = extractFileFromViewer(out);
+        if (fromViewer) out = fromViewer;
         out = githubBlobToRaw(out);
         // Legacy remaps
         try {
@@ -207,6 +226,12 @@
           ctx.strokeStyle = 'rgba(255,215,0,0.9)';
           ctx.strokeRect(state.selection.x, state.selection.y, state.selection.w, state.selection.h);
         }
+        // Draw match overlays (detections/templates)
+        for (const r of state.overlays) {
+          ctx.strokeStyle = r.color || 'rgba(255,100,100,0.9)';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(r.x, r.y, r.w, r.h);
+        }
         ctx.restore();
       }
 
@@ -266,7 +291,7 @@
             if (score > best.score) best = { score, x, y };
           }
         }
-        return best;
+        return { ...best, tw, th };
       }
 
       function detectFooterSymbolsOnCanvas() {
@@ -282,7 +307,7 @@
         for (const tpl of state.templates) {
           const best = matchTemplate(srcGray, tpl);
           if (best.score >= thres) {
-            hits.push({ token: tpl.token, x: best.x, y: y0 + best.y, score: best.score });
+            hits.push({ token: tpl.token, x: best.x, y: y0 + best.y, score: best.score, tw: best.tw, th: best.th });
           }
         }
         // Group hits left→right into clusters (one cluster ≈ one card footer)
@@ -294,6 +319,9 @@
           if (!last || (h1.x - last.maxX) > xGap) clusters.push({ minX: h1.x, maxX: h1.x, items: [h1] });
           else { last.items.push(h1); last.maxX = Math.max(last.maxX, h1.x); }
         }
+        // Update overlays: one box per hit for visual feedback
+        state.overlays = hits.map(h => ({ x: h.x, y: h.y, w: h.tw, h: h.th, color: 'rgba(255,100,100,0.9)' }));
+        drawSelection();
         return clusters.map(c => ({ symbols: [...new Set(c.items.map(i=>i.token))], x: Math.round(c.minX) }));
       }
 
@@ -352,7 +380,26 @@
         const params = getParams();
         $('file').value = params.file || '';
         $('page').value = params.page;
-        $('load').onclick = async () => { try { msg('Loading…'); await loadPdf($('file').value.trim()); msg(''); } catch (e) { console.error(e); msg('Failed to load PDF. Use a raw.githubusercontent.com URL.', 'err'); } };
+        $('load').onclick = async () => {
+          try {
+            msg('Loading…');
+            const input = $('file').value.trim();
+            const normalized = normalizeUrl(input);
+            if (!/\.pdf(\?|#|$)/i.test(normalized)) {
+              msg('Please supply a full PDF URL (ends with .pdf). You can paste a viewer link or a GitHub raw/blob link.', 'err');
+              return;
+            }
+            if (/%(?![0-9A-Fa-f]{2})/.test(normalized) || /%$/.test(normalized)) {
+              msg('The URL looks truncated or partially encoded (ends with %). Copy the full link again.', 'err');
+              return;
+            }
+            await loadPdf(normalized);
+            msg('');
+          } catch (e) {
+            console.error(e);
+            msg('Failed to load PDF. Paste the viewer link or use a raw.githubusercontent.com URL.', 'err');
+          }
+        };
         $('prev').onclick = () => renderPage(state.page - 1);
         $('next').onclick = () => renderPage(state.page + 1);
         $('page').onchange = (e) => renderPage(parseInt(e.target.value,10)||1);
@@ -360,7 +407,8 @@
         $('thres').onchange = ()=>{};
         $('detectPage').onclick = () => detectOnPage(false);
         $('detectAll').onclick = () => detectAllPagesCSV();
-        $('clearTpl').onclick = () => { if (confirm('Clear all templates for this file?')) { state.templates=[]; saveTemplates(); renderTplList(); } };
+        $('clearTpl').onclick = () => { if (confirm('Clear all templates for this file?')) { state.templates=[]; saveTemplates(); renderTplList(); state.overlays=[]; state.selection=null; drawSelection(); } };
+        $('clearRects').onclick = () => { state.overlays = []; state.selection = null; drawSelection(); };
         $('addTpl').onclick = addTemplateFromSelection;
 
         // Drag to select
