@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rule Book Slice Links</title>
+    <style>
+      html, body { height: 100%; margin: 0; background: #111; color: #eee; font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Helvetica, Arial, sans-serif; }
+      .bar { display: flex; gap: 10px; align-items: center; padding: 10px; background: #1b1b1b; position: sticky; top: 0; z-index: 1; }
+      .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 12px; }
+      .grid { display: grid; grid-template-columns: 160px 1fr; gap: 8px 12px; padding: 12px; }
+      input[type=number] { width: 90px; }
+      input[type=text] { width: min(900px, 70vw); }
+      code { background: #0008; padding: 1px 4px; border-radius: 3px; }
+      button { background:#2a2a2a; color:#eee; border:1px solid #333; padding:6px 10px; border-radius:6px; cursor:pointer; }
+      .note { opacity: 0.8; }
+      a { color: #9cf; }
+      .section { border-top: 1px solid #222; margin-top: 10px; padding-top: 10px; }
+    </style>
+  </head>
+  <body>
+    <div class="bar">
+      <strong>Rule Book Slice Links</strong>
+      <span class="note">Generate links to single‑page Rule Book PDFs</span>
+    </div>
+
+    <div class="grid">
+      <label for="page">Printed page</label>
+      <div>
+        <input id="page" type="number" min="1" step="1" value="12" />
+        <button id="build">Build</button>
+      </div>
+
+      <label for="raw">Raw slice URL</label>
+      <div>
+        <input id="raw" type="text" readonly />
+        <button data-copy="#raw">Copy</button>
+        <a id="openRaw" href="#" target="_blank"><button>Open</button></a>
+      </div>
+
+      <label for="viewer">Viewer link</label>
+      <div>
+        <input id="viewer" type="text" readonly />
+        <button data-copy="#viewer">Copy</button>
+        <a id="openViewer" href="#" target="_blank"><button>Open</button></a>
+      </div>
+    </div>
+
+    <div class="row section">
+      <div class="note">
+        Base: <code>files/by_page/slices/Rule Book_2P V9/p{N}.pdf</code><br/>
+        Viewer shows the printed number via <code>&printed=N</code>. Page inside slice is always <code>#page=1</code>.
+      </div>
+    </div>
+
+    <script>
+      const OWNER = 'Perrishnikov';
+      const REPO = 'gloomhaven-rule-sage';
+      const BRANCH = 'main';
+      const SLICE_BASE = 'files/by_page/slices/Rule Book_2P V9';
+      const VIEWER = 'https://perrishnikov.github.io/gloomhaven-rule-sage/';
+
+      function buildUrls(n) {
+        const raw = `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}/${encodeURI(SLICE_BASE)}/p${n}.pdf`;
+        const viewer = `${VIEWER}?file=${encodeURIComponent(raw)}#page=1&printed=${n}`;
+        return { raw, viewer };
+      }
+
+      function setOutputs(n) {
+        const { raw, viewer } = buildUrls(n);
+        const rawEl = document.getElementById('raw');
+        const viewEl = document.getElementById('viewer');
+        rawEl.value = raw; viewEl.value = viewer;
+        document.getElementById('openRaw').href = raw;
+        document.getElementById('openViewer').href = viewer;
+      }
+
+      async function copySel(sel) {
+        const el = document.querySelector(sel);
+        if (!el) return;
+        el.select(); el.setSelectionRange(0, 99999);
+        try { await navigator.clipboard.writeText(el.value); } catch (_) {}
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        const p = document.getElementById('page');
+        setOutputs(parseInt(p.value, 10) || 1);
+        document.getElementById('build').addEventListener('click', () => setOutputs(parseInt(p.value, 10) || 1));
+        document.querySelectorAll('[data-copy]').forEach(btn => btn.addEventListener('click', () => copySel(btn.getAttribute('data-copy'))));
+      });
+    </script>
+  </body>
+  </html>
+

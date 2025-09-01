@@ -36,7 +36,13 @@
           const sm = (url.hash || '').match(/section=([^&#]+)/);
           if (sm) section = decodeURIComponent(sm[1]);
         }
-        return { file, page: Number.isFinite(page) ? page : 1, section };
+        // Optional printed page label (for single-page slices)
+        let printed = parseInt(url.searchParams.get('printed') || '', 10);
+        if (!Number.isFinite(printed)) {
+          const pm = (url.hash || '').match(/printed=(\d+)/);
+          if (pm) printed = parseInt(pm[1], 10);
+        }
+        return { file, page: Number.isFinite(page) ? page : 1, section, printed: Number.isFinite(printed) ? printed : null };
       }
 
       function normalizeFile(file) {
@@ -71,7 +77,7 @@
         return file;
       }
 
-      async function render({ file, page, section }) {
+      async function render({ file, page, section, printed }) {
         const msg = document.getElementById('msg');
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
@@ -82,6 +88,19 @@
         }
         // Backward-compatible remapping from old citation_links/ paths
         file = normalizeFile(file);
+
+        // If linking to the full Rule Book, auto-swap to single-page slice for faster loads
+        try {
+          const dec = decodeURIComponent(file);
+          const RULEBOOK_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule Book_2P V9.pdf';
+          if (dec === RULEBOOK_FULL && Number.isFinite(page)) {
+            const slice = `https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule%20Book_2P%20V9/p${page}.pdf`;
+            file = slice;
+            // Show the printed page in header, render page 1 of single-page PDF
+            printed = printed || page;
+            page = 1;
+          }
+        } catch (_) { /* ignore */ }
         msg.textContent = 'Loading…';
         try {
           const pdf = await pdfjsLib.getDocument({ url: file, withCredentials: false }).promise;
@@ -136,12 +155,14 @@
             const u = new URL(decoded);
             const last = u.pathname.split('/').pop() || '';
             const name = decodeURIComponent(last);
-            const label = section ? `${name} — Page ${page} — Section: ${section}` : `${name} — Page ${page}`;
+            const labelPage = printed || page;
+            const label = section ? `${name} — Page ${labelPage} — Section: ${section}` : `${name} — Page ${labelPage}`;
             const srcEl = document.getElementById('source');
             if (srcEl) { srcEl.textContent = label; srcEl.title = decoded; }
           } catch (_) {
             // Fallback to raw file string
-            const label = section ? `${file} — Page ${page} — Section: ${section}` : `${file} — Page ${page}`;
+            const labelPage = printed || page;
+            const label = section ? `${file} — Page ${labelPage} — Section: ${section}` : `${file} — Page ${labelPage}`;
             const srcEl = document.getElementById('source');
             if (srcEl) { srcEl.textContent = label; srcEl.title = file; }
           }
@@ -162,8 +183,8 @@
         if (window.pdfjsLib) {
           pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.worker.min.js';
         }
-        const { file, page, section } = getParams();
-        render({ file, page, section });
+        const { file, page, section, printed } = getParams();
+        render({ file, page, section, printed });
 
         const prevBtn = document.getElementById('prev');
         const nextBtn = document.getElementById('next');
@@ -174,7 +195,7 @@
           pageInput.value = p;
           setHashPage(p);
           const gp = getParams();
-          render({ file: gp.file, page: p, section: gp.section });
+          render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
         });
         if (nextBtn) nextBtn.addEventListener('click', () => {
           const total = parseInt(document.getElementById('total').textContent, 10) || 1;
@@ -182,14 +203,14 @@
           pageInput.value = p;
           setHashPage(p);
           const gp = getParams();
-          render({ file: gp.file, page: p, section: gp.section });
+          render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
         });
         if (pageInput) pageInput.addEventListener('change', (e) => {
           let p = parseInt(e.target.value, 10);
           if (!Number.isFinite(p) || p < 1) p = 1;
           setHashPage(p);
           const gp = getParams();
-          render({ file: gp.file, page: p, section: gp.section });
+          render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
         });
 
         window.addEventListener('resize', () => {
@@ -197,7 +218,7 @@
           resizeTimer = setTimeout(() => {
             const p = parseInt((document.getElementById('page')||{}).value, 10) || 1;
             const gp = getParams();
-            render({ file: gp.file, page: p, section: gp.section });
+            render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
           }, 150);
         });
       });
