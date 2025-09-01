@@ -4,19 +4,37 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PDF Viewer</title>
+    <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#f8f9fa" media="(prefers-color-scheme: light)">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-      html, body { height: 100%; margin: 0; background: #111; color: #eee; }
-      .bar { display: flex; gap: 12px; align-items: center; padding: 10px; background: #1b1b1b; position: sticky; top: 0; z-index: 1; }
-      .bar input { width: 56px; }
-      .src { max-width: min(70vw, 900px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.9; }
-      #container { display: flex; justify-content: center; padding: 10px; }
-      #canvas { max-width: 100%; width: 100%; height: auto; background: #222; }
+      html, body { height: 100%; margin: 0; }
+      #container { display: flex; justify-content: center; padding: 10px; background: var(--bs-body-bg); }
+      #canvas { max-width: 100%; width: 100%; height: auto; background: rgba(0,0,0,.2); border-radius: .25rem; }
+      .src { max-width: min(60vw, 900px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .9; }
       .msg { padding: 16px; }
-      a { color: #9cf; }
-      .spacer { flex: 1; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js" referrerpolicy="no-referrer"></script>
     <script>
+      // Bootstrap theme: use dark by default; respect user/device if specified
+      (function setTheme() {
+        const root = document.documentElement;
+        const mqDark = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+        const mqLight = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
+        // Default to dark when no explicit preference
+        let theme = 'dark';
+        if (mqDark && mqDark.matches) theme = 'dark';
+        else if (mqLight && mqLight.matches) theme = 'light';
+        root.setAttribute('data-bs-theme', theme);
+        try {
+          mqDark && mqDark.addEventListener('change', e => {
+            root.setAttribute('data-bs-theme', e.matches ? 'dark' : (mqLight && mqLight.matches ? 'light' : 'dark'));
+          });
+          mqLight && mqLight.addEventListener('change', e => {
+            root.setAttribute('data-bs-theme', e.matches ? 'light' : (mqDark && mqDark.matches ? 'dark' : 'dark'));
+          });
+        } catch (_) {}
+      })();
       // Will set the worker src after pdfjsLib is available
       let currentRenderTask = null;
       let resizeTimer = null;
@@ -89,16 +107,20 @@
         // Backward-compatible remapping from old citation_links/ paths
         file = normalizeFile(file);
 
-        // If linking to the full Rule Book, auto-swap to single-page slice for faster loads
+        // Auto-slice handling for Rule Book: treat #page as printed page
+        let usePrintedForDisplay = false;
         try {
           const dec = decodeURIComponent(file);
           const RULEBOOK_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule Book_2P V9.pdf';
-          if (dec === RULEBOOK_FULL && Number.isFinite(page)) {
-            const slice = `https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule%20Book_2P%20V9/p${page}.pdf`;
-            file = slice;
-            // Show the printed page in header, render page 1 of single-page PDF
-            printed = printed || page;
-            page = 1;
+          const SLICE_BASE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule%20Book_2P%20V9/';
+          const isFull = (dec === RULEBOOK_FULL);
+          const isSlice = dec.startsWith(SLICE_BASE);
+          if ((isFull || isSlice) && Number.isFinite(page)) {
+            const printedPage = printed || page; // treat incoming #page as printed page
+            file = `${SLICE_BASE}p${printedPage}.pdf`;
+            page = 1; // slices are single-page
+            printed = printedPage;
+            usePrintedForDisplay = true;
           }
         } catch (_) { /* ignore */ }
         msg.textContent = 'Loading…';
@@ -146,7 +168,8 @@
           msg.textContent = '';
 
           // Update controls
-          document.getElementById('page').value = target;
+          const displayPage = usePrintedForDisplay && printed ? printed : target;
+          document.getElementById('page').value = displayPage;
           document.getElementById('total').textContent = total;
 
           // Update source display: show filename, page and optional section
@@ -155,13 +178,13 @@
             const u = new URL(decoded);
             const last = u.pathname.split('/').pop() || '';
             const name = decodeURIComponent(last);
-            const labelPage = printed || page;
+            const labelPage = (usePrintedForDisplay && printed) ? printed : page;
             const label = section ? `${name} — Page ${labelPage} — Section: ${section}` : `${name} — Page ${labelPage}`;
             const srcEl = document.getElementById('source');
             if (srcEl) { srcEl.textContent = label; srcEl.title = decoded; }
           } catch (_) {
             // Fallback to raw file string
-            const labelPage = printed || page;
+            const labelPage = (usePrintedForDisplay && printed) ? printed : page;
             const label = section ? `${file} — Page ${labelPage} — Section: ${section}` : `${file} — Page ${labelPage}`;
             const srcEl = document.getElementById('source');
             if (srcEl) { srcEl.textContent = label; srcEl.title = file; }
@@ -175,7 +198,10 @@
 
       function setHashPage(page) {
         const url = new URL(window.location.href);
-        url.hash = '#page=' + page;
+        // Preserve existing hash params, update page
+        const params = new URLSearchParams(url.hash.replace(/^#/, ''));
+        params.set('page', String(page));
+        url.hash = '#' + params.toString();
         history.replaceState(null, '', url);
       }
 
@@ -188,6 +214,8 @@
 
         const prevBtn = document.getElementById('prev');
         const nextBtn = document.getElementById('next');
+        const leftBtn = document.getElementById('left');
+        const rightBtn = document.getElementById('right');
         const pageInput = document.getElementById('page');
 
         if (prevBtn) prevBtn.addEventListener('click', () => {
@@ -202,6 +230,22 @@
           const p = Math.min(total, (parseInt(pageInput.value, 10) || 1) + 1);
           pageInput.value = p;
           setHashPage(p);
+          const gp = getParams();
+          render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
+        });
+        // Left/Right page helpers (same as prev/next but labeled for book layout)
+        if (leftBtn) leftBtn.addEventListener('click', () => {
+          const p = Math.max(1, (parseInt(pageInput.value, 10) || 1) - 1);
+          if (p === parseInt(pageInput.value, 10)) return; // no change
+          pageInput.value = p; setHashPage(p);
+          const gp = getParams();
+          render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
+        });
+        if (rightBtn) rightBtn.addEventListener('click', () => {
+          const total = parseInt(document.getElementById('total').textContent, 10) || 1;
+          const p = Math.min(total, (parseInt(pageInput.value, 10) || 1) + 1);
+          if (p === parseInt(pageInput.value, 10)) return; // no change
+          pageInput.value = p; setHashPage(p);
           const gp = getParams();
           render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
         });
@@ -224,15 +268,26 @@
       });
     </script>
   </head>
-  <body>
-    <div class="bar">
-      <strong style="white-space:nowrap;">PDF Viewer</strong>
-      <span id="source" class="src" title=""></span>
-      <span class="spacer"></span>
-      <button id="prev" title="Previous Page">◀</button>
-      <label>Page <input id="page" type="number" min="1" step="1" value="1" /></label>
-      <span>/ <span id="total">?</span></span>
-    </div>
+  <body class="bg-body text-body">
+    <nav class="navbar navbar-expand-lg border-bottom bg-body-tertiary sticky-top">
+      <div class="container-fluid gap-2">
+        <span class="navbar-brand">PDF Viewer</span>
+        <span id="source" class="src me-auto" title=""></span>
+        <div class="d-flex align-items-center gap-2">
+          <div class="btn-group" role="group" aria-label="Page navigation">
+            <button id="left" class="btn btn-outline-secondary" title="Left page">◀ Left</button>
+            <button id="prev" class="btn btn-outline-secondary" title="Previous page">◀</button>
+            <div class="input-group" style="width: 140px;">
+              <span class="input-group-text">Page</span>
+              <input id="page" class="form-control" type="number" min="1" step="1" value="1" />
+              <span class="input-group-text">/ <span id="total">?</span></span>
+            </div>
+            <button id="next" class="btn btn-outline-secondary" title="Next page">▶</button>
+            <button id="right" class="btn btn-outline-secondary" title="Right page">Right ▶</button>
+          </div>
+        </div>
+      </div>
+    </nav>
     <div id="msg" class="msg"></div>
     <div id="container"><canvas id="canvas"></canvas></div>
     
