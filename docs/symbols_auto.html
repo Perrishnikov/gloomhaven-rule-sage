@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+  <head> 
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Card Symbols Auto-Indexer</title>
+    <style>
+      html, body { height: 100%; margin: 0; background: #111; color: #eee; font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Helvetica, Arial, sans-serif; }
+      .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px; background: #1b1b1b; position: sticky; top: 0; z-index: 10; }
+      input[type=text] { width: min(720px, 70vw); }
+      .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      .grid { display: grid; grid-template-columns: 260px 1fr; gap: 12px; padding: 10px; }
+      .panel { background: #1a1a1a; padding: 10px; border-radius: 6px; }
+      .panel h3 { margin: 0 0 8px; font-size: 14px; opacity: 0.9; }
+      #canvas { max-width: 100%; background: #222; }
+      label { opacity: 0.85; }
+      .kv { display:flex; gap:6px; align-items:center; margin:3px 0; }
+      .list { max-height: 300px; overflow: auto; background: #141414; padding: 8px; border-radius: 6px; }
+      button { background:#2a2a2a; color:#eee; border:1px solid #333; padding:6px 10px; border-radius:6px; cursor:pointer; }
+      button.primary { background:#2d5cff; border-color:#2d5cff; }
+      a { color: #9cf; }
+      .note { opacity: 0.8; }
+      .err { color: #f77; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js" referrerpolicy="no-referrer"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  </head>
+  <body>
+    <div class="bar">
+      <strong>Card Symbols Auto-Indexer</strong>
+      <input id="file" type="text" placeholder="Enter raw PDF URL (by_card)" />
+      <button id="load" class="primary">Load</button>
+      <span id="msg" class="note"></span>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <h3>Page & View</h3>
+        <div class="row">
+          <button id="prev">◀</button>
+          <span>Page <input id="page" type="number" min="1" step="1" value="1" style="width:72px;" /> / <span id="total">?</span></span>
+          <button id="next">▶</button>
+        </div>
+        <div class="row">
+          <label>Footer height % <input id="footerPct" type="number" value="22" min="5" max="50" step="1" style="width:64px;" /></label>
+          <label>Match threshold <input id="thres" type="number" value="0.80" min="0.50" max="0.99" step="0.01" style="width:64px;" /></label>
+          <label><input id="useOCR" type="checkbox" /> OCR item number/title</label>
+        </div>
+        <canvas id="canvas" width="1200" height="800"></canvas>
+      </div>
+
+      <div class="panel">
+        <h3>Templates & Detection</h3>
+        <div class="row">
+          <button id="addTpl">Add template from selection…</button>
+          <button id="clearTpl">Clear templates</button>
+          <span class="note">Draw a rectangle on the footer area, then click “Add template”.</span>
+        </div>
+        <div id="tplList" class="list"></div>
+        <div class="row" style="margin-top:8px;">
+          <button id="detectPage" class="primary">Detect on this page</button>
+          <button id="detectAll">Detect all pages → CSV</button>
+        </div>
+        <div id="out" class="list" style="margin-top:8px;"></div>
+      </div>
+    </div>
+
+    <script>
+      if (window.pdfjsLib) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.worker.min.js';
+      }
+
+      const VIEWER = 'viewer.html';
+      const state = {
+        pdf: null,
+        page: 1,
+        total: 0,
+        file: '',
+        templates: [], // {token, imgData, w, h}
+        selection: null,
+      };
+
+      const $ = (id) => document.getElementById(id);
+      const msg = (t, cls='note') => { const el = $('msg'); el.textContent = t; el.className = cls; };
+
+      function loadTemplates() {
+        try {
+          const raw = localStorage.getItem('gh_symbols_templates_' + state.file) || '[]';
+          state.templates = JSON.parse(raw);
+        } catch { state.templates = []; }
+        renderTplList();
+      }
+      function saveTemplates() {
+        localStorage.setItem('gh_symbols_templates_' + state.file, JSON.stringify(state.templates));
+      }
+      function renderTplList() {
+        const box = $('tplList');
+        box.innerHTML = '';
+        if (!state.templates.length) { box.textContent = 'No templates yet.'; return; }
+        for (let i = 0; i < state.templates.length; i++) {
+          const t = state.templates[i];
+          const row = document.createElement('div'); row.className = 'kv';
+          const lab = document.createElement('span'); lab.textContent = t.token + ` (${t.w}×${t.h})`;
+          const del = document.createElement('button'); del.textContent = 'Remove'; del.onclick = () => { state.templates.splice(i,1); saveTemplates(); renderTplList(); };
+          row.appendChild(lab); row.appendChild(del); box.appendChild(row);
+        }
+      }
+
+      function getParams() {
+        const u = new URL(location.href);
+        return {
+          file: u.searchParams.get('file') || '',
+          page: parseInt(u.searchParams.get('page')||'1', 10) || 1,
+        };
+      }
+      function setParam(k, v) { const u = new URL(location.href); u.searchParams.set(k, v); history.replaceState(null,'',u); }
+
+      function githubBlobToRaw(u) {
+        try {
+          const url = new URL(u);
+          if (url.host === 'github.com') {
+            // Expect: https://github.com/{owner}/{repo}/blob/{branch}/path/to.pdf
+            const parts = url.pathname.split('/').filter(Boolean);
+            const owner = parts[0], repo = parts[1];
+            const blobIdx = parts.indexOf('blob');
+            if (owner && repo && blobIdx >= 0 && parts.length > blobIdx+1) {
+              const branch = parts[blobIdx+1];
+              const rest = parts.slice(blobIdx+2).join('/');
+              return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${rest}`;
+            }
+          }
+        } catch (_) { /* ignore */ }
+        return u;
+      }
+
+      function normalizeUrl(u) {
+        let out = u.trim();
+        out = githubBlobToRaw(out);
+        // Legacy remaps
+        try {
+          const dec = decodeURIComponent(out);
+          let s = dec;
+          s = s.replace('/files/manuals/', '/files/by_page/');
+          s = s.replace('/files/items/', '/files/by_card/');
+          if (s.includes('/citation_links/')) {
+            if (s.endsWith('Rule%20Book_2P%20V9.pdf') || s.endsWith('Rule Book_2P V9.pdf')) s = s.replace('/citation_links/', '/files/by_page/');
+            else if (s.includes('Official%20FAQ') || s.includes('Official FAQ')) s = s.replace('/citation_links/', '/files/by_title/');
+            else if (s.includes('Gloomhaven%20Items.pdf') || s.includes('Gloomhaven Items.pdf')) s = s.replace('/citation_links/', '/files/by_card/');
+          }
+          return s;
+        } catch (_) { return out; }
+      }
+
+      async function loadPdf(url) {
+        state.file = normalizeUrl(url);
+        loadTemplates();
+        state.pdf = await pdfjsLib.getDocument({ url: state.file, withCredentials:false }).promise;
+        state.total = state.pdf.numPages;
+        $('total').textContent = state.total;
+        await renderPage(state.page);
+      }
+
+      function toGray(imgData) {
+        const { data, width, height } = imgData;
+        const out = new Uint8ClampedArray(width*height);
+        for (let i=0, j=0; i<data.length; i+=4, j++) {
+          out[j] = (data[i]*0.299 + data[i+1]*0.587 + data[i+2]*0.114)|0;
+        }
+        return { w: width, h: height, d: out };
+      }
+      function extractRegion(ctx, x, y, w, h) {
+        const img = ctx.getImageData(x,y,w,h);
+        return img;
+      }
+
+      async function renderPage(n) {
+        state.page = Math.min(Math.max(1,n), state.total||1);
+        setParam('page', state.page);
+        const p = await state.pdf.getPage(state.page);
+        const dpi = window.devicePixelRatio||1;
+        const view = p.getViewport({ scale: 1 });
+        const targetWidthCSS = Math.min(window.innerWidth-20, 1200);
+        const scale = targetWidthCSS / view.width;
+        const v2 = p.getViewport({ scale });
+        const canvas = $('canvas'); const ctx = canvas.getContext('2d');
+        canvas.width = Math.floor(v2.width * dpi);
+        canvas.height = Math.floor(v2.height * dpi);
+        canvas.style.width = Math.floor(v2.width)+'px';
+        canvas.style.height = Math.floor(v2.height)+'px';
+        await p.render({ canvasContext: ctx, viewport: p.getViewport({ scale: scale * dpi }) }).promise;
+        drawSelection();
+      }
+
+      function drawSelection() {
+        const canvas = $('canvas'); const ctx = canvas.getContext('2d');
+        ctx.save();
+        const footerPct = Math.max(5, Math.min(50, parseInt($('footerPct').value,10)||22));
+        const h = Math.floor(canvas.height * footerPct / 100);
+        ctx.strokeStyle = 'rgba(0,200,255,0.8)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(2, canvas.height - h - 2, canvas.width - 4, h);
+        if (state.selection) {
+          ctx.strokeStyle = 'rgba(255,215,0,0.9)';
+          ctx.strokeRect(state.selection.x, state.selection.y, state.selection.w, state.selection.h);
+        }
+        ctx.restore();
+      }
+
+      function rectFromDrag(ev, start) {
+        const canvas = $('canvas');
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.max(0, Math.min(canvas.width, Math.round((ev.clientX - rect.left) * (canvas.width/rect.width))));
+        const y = Math.max(0, Math.min(canvas.height, Math.round((ev.clientY - rect.top) * (canvas.height/rect.height))));
+        const w = Math.abs(x - start.x);
+        const h = Math.abs(y - start.y);
+        return { x: Math.min(x, start.x), y: Math.min(y, start.y), w, h };
+      }
+
+      function addTemplateFromSelection() {
+        if (!state.selection || state.selection.w < 8 || state.selection.h < 8) { alert('Draw a selection in the footer first.'); return; }
+        const token = prompt('Enter symbol token (e.g., slot:one-hand, use:spent):');
+        if (!token) return;
+        const ctx = $('canvas').getContext('2d');
+        const img = extractRegion(ctx, state.selection.x, state.selection.y, state.selection.w, state.selection.h);
+        const t = { token, w: img.width, h: img.height, imgData: Array.from(img.data) };
+        state.templates.push(t);
+        saveTemplates();
+        renderTplList();
+      }
+
+      function matchTemplate(graySrc, tpl) {
+        // Basic normalized cross-correlation
+        const tw = tpl.w, th = tpl.h;
+        // Build gray tpl once
+        const tplImg = new ImageData(new Uint8ClampedArray(tpl.imgData), tw, th);
+        const tGray = toGray(tplImg);
+        const sw = graySrc.w, sh = graySrc.h;
+        let best = { score: 0, x: 0, y: 0 };
+        // Precompute tpl mean and denom
+        let sumT=0, sumT2=0; const Td = tGray.d;
+        for (let i=0;i<Td.length;i++){ sumT+=Td[i]; sumT2+=Td[i]*Td[i]; }
+        const meanT = sumT/Td.length; const denomT = Math.sqrt(sumT2 - Td.length*meanT*meanT) || 1;
+        for (let y=0; y<=sh-th; y+=2) {
+          for (let x=0; x<=sw-tw; x+=2) {
+            // window stats
+            let sumS=0, sumS2=0, sumST=0;
+            let idxS = y*sw + x;
+            for (let j=0;j<th;j++) {
+              let rowS = (y+j)*sw + x;
+              let rowT = j*tw;
+              for (let i=0;i<tw;i++) {
+                const s = graySrc.d[rowS + i];
+                const t = Td[rowT + i];
+                sumS += s; sumS2 += s*s; sumST += (s * t);
+              }
+            }
+            const n = tw*th;
+            const meanS = sumS/n; const denomS = Math.sqrt(Math.max(1e-6, sumS2 - n*meanS*meanS));
+            const num = sumST - n*meanS*meanT;
+            const denom = denomS * denomT || 1;
+            const score = num / denom;
+            if (score > best.score) best = { score, x, y };
+          }
+        }
+        return best;
+      }
+
+      function detectFooterSymbolsOnCanvas() {
+        if (!state.templates.length) { alert('Add at least one template.'); return []; }
+        const canvas = $('canvas'); const ctx = canvas.getContext('2d');
+        const footerPct = Math.max(5, Math.min(50, parseInt($('footerPct').value,10)||22));
+        const h = Math.floor(canvas.height * footerPct / 100);
+        const y0 = canvas.height - h;
+        const img = extractRegion(ctx, 0, y0, canvas.width, h);
+        const srcGray = toGray(img);
+        const thres = parseFloat($('thres').value) || 0.8;
+        const hits = [];
+        for (const tpl of state.templates) {
+          const best = matchTemplate(srcGray, tpl);
+          if (best.score >= thres) {
+            hits.push({ token: tpl.token, x: best.x, y: y0 + best.y, score: best.score });
+          }
+        }
+        // Group hits left→right into clusters (one cluster ≈ one card footer)
+        hits.sort((a,b)=>a.x-b.x);
+        const clusters = [];
+        const xGap = canvas.width * 0.06; // heuristic
+        for (const h1 of hits) {
+          const last = clusters[clusters.length-1];
+          if (!last || (h1.x - last.maxX) > xGap) clusters.push({ minX: h1.x, maxX: h1.x, items: [h1] });
+          else { last.items.push(h1); last.maxX = Math.max(last.maxX, h1.x); }
+        }
+        return clusters.map(c => ({ symbols: [...new Set(c.items.map(i=>i.token))], x: Math.round(c.minX) }));
+      }
+
+      async function ocrCardId(canvas, cluster) {
+        if (!$('useOCR').checked) return '';
+        try {
+          // Sample a title/number strip near top quarter aligned to cluster.x
+          const ctx = canvas.getContext('2d');
+          const w = Math.floor(canvas.width * 0.22);
+          const h = Math.floor(canvas.height * 0.08);
+          const x = Math.max(0, Math.min(canvas.width - w, cluster.x - Math.floor(w/4)));
+          const y = Math.floor(canvas.height * 0.12);
+          const img = ctx.getImageData(x,y,w,h);
+          const off = document.createElement('canvas'); off.width=w; off.height=h; off.getContext('2d').putImageData(img,0,0);
+          const res = await Tesseract.recognize(off, 'eng', { logger: ()=>{} });
+          const text = (res.data.text||'').replace(/\s+/g,' ').trim();
+          // Heuristic: try to extract an item number like 0xx
+          const m = text.match(/(Item\s*)?(\d{1,3})/i);
+          return (m && m[2]) ? `Item ${m[2]}` : text;
+        } catch (e) { return ''; }
+      }
+
+      async function detectOnPage(toCSV=false) {
+        const canvas = $('canvas');
+        const clusters = detectFooterSymbolsOnCanvas();
+        const rows = [];
+        for (const cl of clusters) {
+          const id = await ocrCardId(canvas, cl);
+          rows.push({ page: state.page, card_id: id, symbols: cl.symbols.join(','), notes: '' });
+        }
+        const out = $('out');
+        if (!toCSV) {
+          out.innerHTML = '<strong>Detections:</strong><br>' + (rows.length ? rows.map(r=>`${r.page} — ${r.card_id} — ${r.symbols}`).join('<br>') : '<span class="note">None found at threshold.</span>');
+        }
+        return rows;
+      }
+
+      async function detectAllPagesCSV() {
+        if (!state.pdf) return;
+        const all = [];
+        for (let i=1;i<=state.total;i++) {
+          await renderPage(i);
+          const rows = await detectOnPage(true);
+          all.push(...rows);
+          msg(`Processed ${i}/${state.total}…`);
+          await new Promise(r=>setTimeout(r,10));
+        }
+        const header = 'page,card_id,symbols,notes\n';
+        const body = all.map(r => `${r.page},${JSON.stringify(r.card_id||'').slice(1,-1)},${JSON.stringify(r.symbols||'').slice(1,-1)},${JSON.stringify(r.notes||'').slice(1,-1)}`).join('\n');
+        const blob = new Blob([header+body+'\n'], { type: 'text/csv' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'symbols_auto.csv'; a.click();
+        msg(`Exported ${all.length} rows to CSV.`);
+      }
+
+      async function main() {
+        const params = getParams();
+        $('file').value = params.file || '';
+        $('page').value = params.page;
+        $('load').onclick = async () => { try { msg('Loading…'); await loadPdf($('file').value.trim()); msg(''); } catch (e) { console.error(e); msg('Failed to load PDF. Use a raw.githubusercontent.com URL.', 'err'); } };
+        $('prev').onclick = () => renderPage(state.page - 1);
+        $('next').onclick = () => renderPage(state.page + 1);
+        $('page').onchange = (e) => renderPage(parseInt(e.target.value,10)||1);
+        $('footerPct').onchange = drawSelection;
+        $('thres').onchange = ()=>{};
+        $('detectPage').onclick = () => detectOnPage(false);
+        $('detectAll').onclick = () => detectAllPagesCSV();
+        $('clearTpl').onclick = () => { if (confirm('Clear all templates for this file?')) { state.templates=[]; saveTemplates(); renderTplList(); } };
+        $('addTpl').onclick = addTemplateFromSelection;
+
+        // Drag to select
+        let dragging = null;
+        $('canvas').addEventListener('mousedown', (e) => {
+          const rect = $('canvas').getBoundingClientRect();
+          dragging = { x: Math.round((e.clientX-rect.left)*($('canvas').width/rect.width)), y: Math.round((e.clientY-rect.top)*($('canvas').height/rect.height)) };
+        });
+        window.addEventListener('mousemove', (e) => { if (!dragging) return; state.selection = rectFromDrag(e, dragging); renderPage(state.page); });
+        window.addEventListener('mouseup', () => { dragging = null; drawSelection(); });
+
+        if (params.file) { try { await loadPdf(params.file); } catch (e) { console.error(e); msg('Failed to load initial PDF', 'err'); } }
+      }
+
+      main();
+    </script>
+  </body>
+  </html>
