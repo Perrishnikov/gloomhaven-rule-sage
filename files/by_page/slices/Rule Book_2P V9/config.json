@@ -1,0 +1,9 @@
+{
+  "max_pages": 82,
+  "first_page": 1,
+  "filename_pattern": "p{n}.pdf",
+  "page_label": "printed",
+  "title": "Rule Book — Slices",
+  "link_mode": "slice",
+  "notes": "Rule Book single-page slices. Adjust if the source changes."
+}

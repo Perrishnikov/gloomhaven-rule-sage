@@ -105,48 +105,16 @@
         return { file, page: Number.isFinite(page) ? page : 1, section, printed: Number.isFinite(printed) ? printed : null };
       }
 
-      function normalizeFile(file) {
-        try {
-          const decoded = decodeURIComponent(file);
-          let out = decoded;
-          // Exact file remaps from legacy folder
-          const exact = new Map([
-            ['https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/citation_links/Rule%20Book_2P%20V9.pdf',
-             'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule%20Book_2P%20V9.pdf'],
-            ['https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/citation_links/Official%20FAQ%20for%20Game%20(no%20rules%20questions%20please)%20_%20BoardGameGeek.pdf',
-             'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_title/Official%20FAQ%20for%20Game%20(no%20rules%20questions%20please)%20_%20BoardGameGeek.pdf'],
-            ['https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/citation_links/Gloomhaven%20Items.pdf',
-             'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_card/Gloomhaven%20Items.pdf'],
-          ]);
-          if (exact.has(out)) return exact.get(out);
-          // Folder remaps (broad): manuals -> by_page, items -> by_card, citation_links -> by_* best-effort
-          out = out.replace('/files/manuals/', '/files/by_page/');
-          out = out.replace('/files/items/', '/files/by_card/');
-          // citation_links best-effort: try to infer by filename
-          if (out.includes('/citation_links/')) {
-            if (out.endsWith('Rule%20Book_2P%20V9.pdf') || out.endsWith('Rule Book_2P V9.pdf')) {
-              out = out.replace('/citation_links/', '/files/by_page/');
-            } else if (out.includes('Official%20FAQ') || out.includes('Official FAQ')) {
-              out = out.replace('/citation_links/', '/files/by_title/');
-            } else if (out.includes('Gloomhaven%20Items.pdf') || out.includes('Gloomhaven Items.pdf')) {
-              out = out.replace('/citation_links/', '/files/by_card/');
-            }
-          }
-          return out;
-        } catch (_) { /* ignore */ }
-        return file;
-      }
 
-      function setNavAnchors({ file, section, displayPage, total, printed, isRulebook }) {
+      function setNavAnchors({ file, section, displayPage, total, printed, isSlice, sliceBase, maxPages, firstPage }) {
         try {
           const leftEl = document.getElementById('left');
           const rightEl = document.getElementById('right');
           if (!leftEl || !rightEl) return;
           const base = location.origin + location.pathname; // viewer.html
-          const RULEBOOK_SLICE_BASE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule%20Book_2P%20V9/';
           function hrefFor(n) {
-            if (isRulebook) {
-              const targetFile = `${RULEBOOK_SLICE_BASE}p${n}.pdf`;
+            if (isSlice && sliceBase) {
+              const targetFile = `${sliceBase}p${n}.pdf`;
               const q = '?file=' + encodeURIComponent(targetFile);
               const h = '#page=1&printed=' + n + (section ? ('&section=' + encodeURIComponent(section)) : '');
               return base + q + h;
@@ -157,24 +125,21 @@
             return base + q + '#' + hParts.join('&');
           }
 
-          const current = Math.max(1, parseInt(displayPage, 10) || 1);
-          const prev = Math.max(1, current - 1);
+          const start = Number.isFinite(firstPage) ? firstPage : 1;
+          const current = Math.max(start, parseInt(displayPage, 10) || start);
+          const prev = Math.max(start, current - 1);
           const next = current + 1;
 
           // Set left anchor
           leftEl.href = hrefFor(prev);
-          const atStart = current <= 1;
+          const atStart = current <= start;
           leftEl.classList.toggle('disabled', atStart);
           leftEl.setAttribute('aria-disabled', atStart ? 'true' : 'false');
 
           // Set right anchor
           let atEnd = false;
-          if (!isRulebook && Number.isFinite(total)) atEnd = current >= total;
-          // For rulebook slices, if printed known, optionally cap at 82
-          if (isRulebook) {
-            const MAX_PRINTED = 82;
-            atEnd = current >= MAX_PRINTED;
-          }
+          if (!isSlice && Number.isFinite(total)) atEnd = current >= total;
+          if (isSlice && Number.isFinite(maxPages)) atEnd = current >= maxPages;
           rightEl.href = hrefFor(next);
           rightEl.classList.toggle('disabled', atEnd);
           rightEl.setAttribute('aria-disabled', atEnd ? 'true' : 'false');
@@ -190,40 +155,99 @@
             encodeURIComponent('https://raw.githubusercontent.com/owner/repo/branch/path/to.pdf') + '#page=2</code>';
           return;
         }
-        // Backward-compatible remapping from old citation_links/ paths
-        file = normalizeFile(file);
+        // Expect modern file paths; no legacy remapping
 
-        // Auto-slice handling for Rule Book: treat #page as printed page
+        // Auto-slice handling and slice config
         let usePrintedForDisplay = false;
-        let isRulebookSliceContext = false;
+        let isSliceContext = false;
+        let sliceBase = '';
+        let sliceConfig = null;
         try {
           const dec = decodeURIComponent(file);
           const RULEBOOK_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule Book_2P V9.pdf';
-          // Use decoded path (spaces) to match dec (already decodeURIComponent'ed)
-          const SLICE_BASE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule Book_2P V9/';
+          // Decoded slice base with spaces
+          const RB_SLICE_BASE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule Book_2P V9/';
           const isFull = (dec === RULEBOOK_FULL);
-          const isSlice = dec.startsWith(SLICE_BASE);
-          if (isFull || isSlice) {
+          const isRBslice = dec.startsWith(RB_SLICE_BASE);
+          if (isFull || isRBslice) {
             // Determine printed page:
             // - If coming from full file: treat #page as printed page.
             // - If coming from slice: parse p{N}.pdf if printed not supplied.
             let printedPage = printed;
             if (!Number.isFinite(printedPage)) {
-              if (isSlice) {
-                const m = dec.match(/\/p(\d+)\.pdf$/);
-                if (m) printedPage = parseInt(m[1], 10);
+              if (isRBslice) {
+                // Try config pattern first
+                try {
+                  const cfgUrl = new URL('config.json', RB_SLICE_BASE).toString();
+                  const resp = await fetch(cfgUrl, { cache: 'no-store' });
+                  if (resp.ok) {
+                    const cfg = await resp.json();
+                    const re = regexFromPattern(cfg.filename_pattern || 'p{n}.pdf');
+                    const m = dec.match(re);
+                    if (m) printedPage = parseInt(m[1], 10);
+                  }
+                } catch (_) {}
+                if (!Number.isFinite(printedPage)) {
+                  const m2 = dec.match(/\/p(\d+)\.pdf$/);
+                  if (m2) printedPage = parseInt(m2[1], 10);
+                }
               }
             }
             if (!Number.isFinite(printedPage)) {
               printedPage = Number.isFinite(page) ? page : 1;
             }
-            file = `${SLICE_BASE}p${printedPage}.pdf`;
+            // If config exists, honor filename_pattern
+            let targetName = 'p' + printedPage + '.pdf';
+            try {
+              const cfgUrl = new URL('config.json', RB_SLICE_BASE).toString();
+              const resp = await fetch(cfgUrl, { cache: 'no-store' });
+              if (resp.ok) {
+                const cfg = await resp.json();
+                targetName = fileNameFromPattern(cfg.filename_pattern || 'p{n}.pdf', printedPage);
+              }
+            } catch (_) {}
+            file = RB_SLICE_BASE + targetName;
             page = 1; // slices are single-page
             printed = printedPage;
             usePrintedForDisplay = true;
-            isRulebookSliceContext = true;
+            isSliceContext = true;
+            sliceBase = RB_SLICE_BASE;
           }
         } catch (_) { /* ignore */ }
+
+        // If current file is any slice under /files/by_page/slices/, derive sliceBase generically
+        try {
+          const u = new URL(file);
+          const path = decodeURIComponent(u.pathname);
+          if (path.includes('/files/by_page/slices/')) {
+            const base = u.toString().replace(/[^/]+$/, ''); // keep trailing /
+            sliceBase = base;
+            isSliceContext = true;
+          }
+        } catch (_) {}
+
+        // Try to load optional slice config (config.json) from the slice folder
+        let sliceMaxPages = null;
+        let sliceFirstPage = 1;
+        let slicePageLabel = 'printed';
+        let sliceTitle = '';
+        let sliceFilenamePattern = 'p{n}.pdf';
+        let sliceLinkMode = 'slice';
+        if (isSliceContext && sliceBase) {
+          try {
+            const cfgUrl = new URL('config.json', sliceBase).toString();
+            const resp = await fetch(cfgUrl, { cache: 'no-store' });
+            if (resp.ok) {
+              sliceConfig = await resp.json();
+              if (Number.isFinite(sliceConfig.max_pages)) sliceMaxPages = sliceConfig.max_pages;
+              if (Number.isFinite(sliceConfig.first_page)) sliceFirstPage = sliceConfig.first_page;
+              if (typeof sliceConfig.page_label === 'string') slicePageLabel = sliceConfig.page_label;
+              if (typeof sliceConfig.title === 'string') sliceTitle = sliceConfig.title;
+              if (typeof sliceConfig.filename_pattern === 'string') sliceFilenamePattern = sliceConfig.filename_pattern;
+              if (typeof sliceConfig.link_mode === 'string') sliceLinkMode = sliceConfig.link_mode;
+            }
+          } catch (_) {}
+        }
         msg.textContent = 'Loading…';
         try {
           const pdf = await pdfjsLib.getDocument({ url: file, withCredentials: false }).promise;
@@ -269,11 +293,15 @@
           msg.textContent = '';
 
           // Update controls
-          const displayPage = usePrintedForDisplay && printed ? printed : target;
-          const displayTotal = isRulebookSliceContext ? 82 : total;
+          let displayPage = usePrintedForDisplay && printed ? printed : target;
+          // Respect page_label option for slices
+          if (isSliceContext && slicePageLabel === 'index') displayPage = 1;
+          const displayTotal = (isSliceContext && Number.isFinite(sliceMaxPages)) ? sliceMaxPages : (isSliceContext ? 82 : total);
           const pageInputEl = document.getElementById('page');
           pageInputEl.value = displayPage;
-          if (isRulebookSliceContext) pageInputEl.setAttribute('max', '82');
+          if (isSliceContext && Number.isFinite(sliceMaxPages)) pageInputEl.setAttribute('max', String(sliceMaxPages));
+          else if (isSliceContext) pageInputEl.setAttribute('max', '82');
+          if (isSliceContext && Number.isFinite(sliceFirstPage)) pageInputEl.setAttribute('min', String(sliceFirstPage));
           else pageInputEl.removeAttribute('max');
           document.getElementById('total').textContent = displayTotal;
 
@@ -282,7 +310,8 @@
             const decoded = decodeURIComponent(file);
             const u = new URL(decoded);
             const last = u.pathname.split('/').pop() || '';
-            const name = decodeURIComponent(last);
+            let name = decodeURIComponent(last);
+            if (isSliceContext && sliceTitle) name = sliceTitle;
             const labelPage = (usePrintedForDisplay && printed) ? printed : page;
             const label = section ? `${name} — Page ${labelPage} — Section: ${section}` : `${name} — Page ${labelPage}`;
             const srcEl = document.getElementById('source');
@@ -296,7 +325,7 @@
           }
 
           // Update smart nav anchors
-          setNavAnchors({ file, section, displayPage, total, printed, isRulebook: isRulebookSliceContext });
+          setNavAnchors({ file, section, displayPage, total, printed, isSlice: isSliceContext, sliceBase, maxPages: (Number.isFinite(sliceMaxPages) ? sliceMaxPages : (isSliceContext ? 82 : total)), firstPage: sliceFirstPage });
         } catch (e) {
           console.error(e);
           msg.innerHTML = 'Failed to load PDF. Ensure the URL is publicly accessible.\n' +
@@ -331,6 +360,16 @@
           // Clamp for Rule Book slices to 1..82
           const gp0 = getParams();
           try {
+      function fileNameFromPattern(pattern, n) {
+        const p = (pattern || 'p{n}.pdf');
+        return p.replace('{n}', String(n));
+      }
+      function regexFromPattern(pattern) {
+        const p = (pattern || 'p{n}.pdf');
+        const esc = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = esc.replace('\\{n\\}', '(\\d+)');
+        return new RegExp(re + '$');
+      }
             const dec = decodeURIComponent(gp0.file || '');
             const RB_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule Book_2P V9.pdf';
             const RB_SLICE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule%20Book_2P%20V9/';
