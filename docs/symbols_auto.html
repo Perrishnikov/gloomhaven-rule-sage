@@ -9,10 +9,10 @@
       .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px; background: #1b1b1b; position: sticky; top: 0; z-index: 10; }
       input[type=text] { width: min(720px, 70vw); }
       .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-      .grid { display: grid; grid-template-columns: 260px 1fr; gap: 12px; padding: 10px; }
+      .grid { display: grid; grid-template-columns: 1fr 320px; gap: 12px; padding: 10px; }
       .panel { background: #1a1a1a; padding: 10px; border-radius: 6px; }
       .panel h3 { margin: 0 0 8px; font-size: 14px; opacity: 0.9; }
-      #canvas { max-width: 100%; background: #222; }
+      #canvas { width: 100%; height: auto; background: #222; display: block; }
       label { opacity: 0.85; }
       .kv { display:flex; gap:6px; align-items:center; margin:3px 0; }
       .list { max-height: 300px; overflow: auto; background: #141414; padding: 8px; border-radius: 6px; }
@@ -179,14 +179,18 @@
         const p = await state.pdf.getPage(state.page);
         const dpi = window.devicePixelRatio||1;
         const view = p.getViewport({ scale: 1 });
-        const targetWidthCSS = Math.min(window.innerWidth-20, 1200);
+        // Fit to available panel width
+        const canvas = $('canvas'); const ctx = canvas.getContext('2d');
+        const parent = canvas.parentElement;
+        const parentWidth = (parent && parent.clientWidth) ? parent.clientWidth : (window.innerWidth - 40);
+        const targetWidthCSS = Math.max(200, Math.min(parentWidth - 16, 1400));
         const scale = targetWidthCSS / view.width;
         const v2 = p.getViewport({ scale });
-        const canvas = $('canvas'); const ctx = canvas.getContext('2d');
         canvas.width = Math.floor(v2.width * dpi);
         canvas.height = Math.floor(v2.height * dpi);
-        canvas.style.width = Math.floor(v2.width)+'px';
-        canvas.style.height = Math.floor(v2.height)+'px';
+        // Let CSS handle responsive display sizing to preserve aspect ratio
+        canvas.style.width = '100%';
+        canvas.style.height = 'auto';
         await p.render({ canvasContext: ctx, viewport: p.getViewport({ scale: scale * dpi }) }).promise;
         drawSelection();
       }
@@ -367,6 +371,13 @@
         });
         window.addEventListener('mousemove', (e) => { if (!dragging) return; state.selection = rectFromDrag(e, dragging); renderPage(state.page); });
         window.addEventListener('mouseup', () => { dragging = null; drawSelection(); });
+
+        // Re-render on resize to maintain aspect ratio and selection accuracy
+        let resizeTimer = null;
+        window.addEventListener('resize', () => {
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => { if (state.pdf) renderPage(state.page); }, 120);
+        });
 
         if (params.file) { try { await loadPdf(params.file); } catch (e) { console.error(e); msg('Failed to load initial PDF', 'err'); } }
       }
