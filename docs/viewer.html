@@ -95,6 +95,49 @@
         return file;
       }
 
+      function setNavAnchors({ file, section, displayPage, total, printed, isRulebook }) {
+        try {
+          const leftEl = document.getElementById('left');
+          const rightEl = document.getElementById('right');
+          if (!leftEl || !rightEl) return;
+          const base = location.origin + location.pathname; // viewer.html
+          const RULEBOOK_SLICE_BASE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule%20Book_2P%20V9/';
+          function hrefFor(n) {
+            if (isRulebook) {
+              const targetFile = `${RULEBOOK_SLICE_BASE}p${n}.pdf`;
+              const q = '?file=' + encodeURIComponent(targetFile);
+              const h = '#page=1&printed=' + n + (section ? ('&section=' + encodeURIComponent(section)) : '');
+              return base + q + h;
+            }
+            const q = '?file=' + encodeURIComponent(file);
+            const hParts = ['page=' + n];
+            if (section) hParts.push('section=' + encodeURIComponent(section));
+            return base + q + '#' + hParts.join('&');
+          }
+
+          const prev = Math.max(1, (displayPage || 1) - 1);
+          const next = (displayPage || 1) + 1;
+
+          // Set left anchor
+          leftEl.href = hrefFor(prev);
+          const atStart = (displayPage || 1) <= 1;
+          leftEl.classList.toggle('disabled', atStart);
+          leftEl.setAttribute('aria-disabled', atStart ? 'true' : 'false');
+
+          // Set right anchor
+          let atEnd = false;
+          if (!isRulebook && Number.isFinite(total)) atEnd = (displayPage || 1) >= total;
+          // For rulebook slices, if printed known, optionally cap at 82
+          if (isRulebook) {
+            const MAX_PRINTED = 82;
+            atEnd = (displayPage || 1) >= MAX_PRINTED;
+          }
+          rightEl.href = hrefFor(next);
+          rightEl.classList.toggle('disabled', atEnd);
+          rightEl.setAttribute('aria-disabled', atEnd ? 'true' : 'false');
+        } catch (_) {}
+      }
+
       async function render({ file, page, section, printed }) {
         const msg = document.getElementById('msg');
         const canvas = document.getElementById('canvas');
@@ -109,6 +152,7 @@
 
         // Auto-slice handling for Rule Book: treat #page as printed page
         let usePrintedForDisplay = false;
+        let isRulebookContext = false;
         try {
           const dec = decodeURIComponent(file);
           const RULEBOOK_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule Book_2P V9.pdf';
@@ -121,6 +165,7 @@
             page = 1; // slices are single-page
             printed = printedPage;
             usePrintedForDisplay = true;
+            isRulebookContext = true;
           }
         } catch (_) { /* ignore */ }
         msg.textContent = 'Loading…';
@@ -189,6 +234,9 @@
             const srcEl = document.getElementById('source');
             if (srcEl) { srcEl.textContent = label; srcEl.title = file; }
           }
+
+          // Update smart nav anchors
+          setNavAnchors({ file, section, displayPage, total, printed, isRulebook: isRulebookContext });
         } catch (e) {
           console.error(e);
           msg.innerHTML = 'Failed to load PDF. Ensure the URL is publicly accessible.\n' +
@@ -212,43 +260,11 @@
         const { file, page, section, printed } = getParams();
         render({ file, page, section, printed });
 
-        const prevBtn = document.getElementById('prev');
-        const nextBtn = document.getElementById('next');
         const leftBtn = document.getElementById('left');
         const rightBtn = document.getElementById('right');
         const pageInput = document.getElementById('page');
 
-        if (prevBtn) prevBtn.addEventListener('click', () => {
-          const p = Math.max(1, parseInt(pageInput.value, 10) - 1);
-          pageInput.value = p;
-          setHashPage(p);
-          const gp = getParams();
-          render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
-        });
-        if (nextBtn) nextBtn.addEventListener('click', () => {
-          const total = parseInt(document.getElementById('total').textContent, 10) || 1;
-          const p = Math.min(total, (parseInt(pageInput.value, 10) || 1) + 1);
-          pageInput.value = p;
-          setHashPage(p);
-          const gp = getParams();
-          render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
-        });
-        // Left/Right page helpers (same as prev/next but labeled for book layout)
-        if (leftBtn) leftBtn.addEventListener('click', () => {
-          const p = Math.max(1, (parseInt(pageInput.value, 10) || 1) - 1);
-          if (p === parseInt(pageInput.value, 10)) return; // no change
-          pageInput.value = p; setHashPage(p);
-          const gp = getParams();
-          render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
-        });
-        if (rightBtn) rightBtn.addEventListener('click', () => {
-          const total = parseInt(document.getElementById('total').textContent, 10) || 1;
-          const p = Math.min(total, (parseInt(pageInput.value, 10) || 1) + 1);
-          if (p === parseInt(pageInput.value, 10)) return; // no change
-          pageInput.value = p; setHashPage(p);
-          const gp = getParams();
-          render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
-        });
+        // Keep input change behavior
         if (pageInput) pageInput.addEventListener('change', (e) => {
           let p = parseInt(e.target.value, 10);
           if (!Number.isFinite(p) || p < 1) p = 1;
@@ -275,15 +291,13 @@
         <span id="source" class="src me-auto" title=""></span>
         <div class="d-flex align-items-center gap-2">
           <div class="btn-group" role="group" aria-label="Page navigation">
-            <button id="left" class="btn btn-outline-secondary" title="Left page">◀ Left</button>
-            <button id="prev" class="btn btn-outline-secondary" title="Previous page">◀</button>
-            <div class="input-group" style="width: 140px;">
+            <a id="left" class="btn btn-outline-secondary" title="Previous page" href="#">◀ Previous</a>
+            <div class="input-group" style="width: 160px;">
               <span class="input-group-text">Page</span>
               <input id="page" class="form-control" type="number" min="1" step="1" value="1" />
               <span class="input-group-text">/ <span id="total">?</span></span>
             </div>
-            <button id="next" class="btn btn-outline-secondary" title="Next page">▶</button>
-            <button id="right" class="btn btn-outline-secondary" title="Right page">Right ▶</button>
+            <a id="right" class="btn btn-outline-secondary" title="Next page" href="#">Next ▶</a>
           </div>
         </div>
       </div>
