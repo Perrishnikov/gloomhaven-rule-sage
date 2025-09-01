@@ -1,0 +1,21 @@
+{
+  // Total number of printed pages represented by this slice set.
+  "max_pages": 82,
+
+  // The first printed page number (used for clamping/navigation). Usually 1.
+  "first_page": 1,
+
+  // File naming for slices. {n} will be replaced with the printed page number.
+  // Examples: "p{n}.pdf" (default), "page-{n}.pdf", "slice-{n}.pdf"
+  "filename_pattern": "p{n}.pdf",
+
+  // Page number shown in the UI for slices: "printed" to show the printed number,
+  // or "index" to show 1 (since each slice PDF is a single page).
+  "page_label": "printed",
+
+  // Optional title to display instead of the underlying file name.
+  "title": "Rule Book — Slices",
+
+  // Reserved for future behavior. "slice" keeps navigation within slices; "full" could navigate the full PDF.
+  "link_mode": "slice"
+}

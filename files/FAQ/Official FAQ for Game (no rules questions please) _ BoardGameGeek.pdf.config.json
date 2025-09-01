@@ -1,0 +1,8 @@
+{
+  // Display name for the viewer header
+  "title": "Official FAQ — Gloomhaven (BoardGameGeek)",
+
+  // For single PDFs, show printed page numbers when the PDF has labels
+  // Set to "index" to always show the PDF's internal page index instead
+  "page_label": "printed"
+}

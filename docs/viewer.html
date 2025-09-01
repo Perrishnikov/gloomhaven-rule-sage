@@ -146,6 +146,29 @@
         } catch (_) {}
       }
 
+      // --- JSON with comments support (JSONC) ---
+      function parseJsonC(text) {
+        if (typeof text !== 'string') return null;
+        // Remove UTF-8 BOM
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+        // Strip /* block */ comments
+        text = text.replace(/\/\*[\s\S]*?\*\//g, '');
+        // Strip // line comments
+        text = text.replace(/(^|\s)\/\/.*$/gm, (m) => (m.startsWith('//') ? '' : m.replace(/\/\/.*$/, '')));
+        // Remove trailing commas in objects/arrays
+        text = text.replace(/,(\s*[}\]])/g, '$1');
+        return JSON.parse(text);
+      }
+
+      async function fetchConfigJson(url) {
+        try {
+          const resp = await fetch(url, { cache: 'no-store' });
+          if (!resp.ok) return null;
+          const txt = await resp.text();
+          return parseJsonC(txt);
+        } catch (_) { return null; }
+      }
+
       async function render({ file, page, section, printed }) {
         const msg = document.getElementById('msg');
         const canvas = document.getElementById('canvas');
@@ -162,11 +185,12 @@
         let isSliceContext = false;
         let sliceBase = '';
         let sliceConfig = null;
+        let fileConfig = null; // per-file (non-slice) sidecar config
         try {
           const dec = decodeURIComponent(file);
-          const RULEBOOK_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule Book_2P V9.pdf';
-          // Decoded slice base with spaces
-          const RB_SLICE_BASE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule Book_2P V9/';
+          const RULEBOOK_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/Rule Book_2P V9/Rule Book_2P V9.pdf';
+          // New slice base (folder holds slices + config.json)
+          const RB_SLICE_BASE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/Rule Book_2P V9/';
           const isFull = (dec === RULEBOOK_FULL);
           const isRBslice = dec.startsWith(RB_SLICE_BASE);
           if (isFull || isRBslice) {
@@ -179,9 +203,8 @@
                 // Try config pattern first
                 try {
                   const cfgUrl = new URL('config.json', RB_SLICE_BASE).toString();
-                  const resp = await fetch(cfgUrl, { cache: 'no-store' });
-                  if (resp.ok) {
-                    const cfg = await resp.json();
+                  const cfg = await fetchConfigJson(cfgUrl);
+                  if (cfg) {
                     const re = regexFromPattern(cfg.filename_pattern || 'p{n}.pdf');
                     const m = dec.match(re);
                     if (m) printedPage = parseInt(m[1], 10);
@@ -200,9 +223,8 @@
             let targetName = 'p' + printedPage + '.pdf';
             try {
               const cfgUrl = new URL('config.json', RB_SLICE_BASE).toString();
-              const resp = await fetch(cfgUrl, { cache: 'no-store' });
-              if (resp.ok) {
-                const cfg = await resp.json();
+              const cfg = await fetchConfigJson(cfgUrl);
+              if (cfg) {
                 targetName = fileNameFromPattern(cfg.filename_pattern || 'p{n}.pdf', printedPage);
               }
             } catch (_) {}
@@ -219,7 +241,7 @@
         try {
           const u = new URL(file);
           const path = decodeURIComponent(u.pathname);
-          if (path.includes('/files/by_page/slices/')) {
+          if (path.includes('/files/by_page/slices/') || path.includes('/files/Rule Book_2P V9/')) {
             const base = u.toString().replace(/[^/]+$/, ''); // keep trailing /
             sliceBase = base;
             isSliceContext = true;
@@ -234,18 +256,31 @@
         let sliceFilenamePattern = 'p{n}.pdf';
         let sliceLinkMode = 'slice';
         if (isSliceContext && sliceBase) {
+          const cfgUrl = new URL('config.json', sliceBase).toString();
+          const cfg = await fetchConfigJson(cfgUrl);
+          if (cfg) {
+            sliceConfig = cfg;
+            if (Number.isFinite(cfg.max_pages)) sliceMaxPages = cfg.max_pages;
+            if (Number.isFinite(cfg.first_page)) sliceFirstPage = cfg.first_page;
+            if (typeof cfg.page_label === 'string') slicePageLabel = cfg.page_label;
+            if (typeof cfg.title === 'string') sliceTitle = cfg.title;
+            if (typeof cfg.filename_pattern === 'string') sliceFilenamePattern = cfg.filename_pattern;
+            if (typeof cfg.link_mode === 'string') sliceLinkMode = cfg.link_mode;
+          }
+        }
+
+        // For non-slice single PDFs, look for a sidecar config next to the file: <filename>.config.json
+        if (!isSliceContext && file) {
           try {
-            const cfgUrl = new URL('config.json', sliceBase).toString();
-            const resp = await fetch(cfgUrl, { cache: 'no-store' });
-            if (resp.ok) {
-              sliceConfig = await resp.json();
-              if (Number.isFinite(sliceConfig.max_pages)) sliceMaxPages = sliceConfig.max_pages;
-              if (Number.isFinite(sliceConfig.first_page)) sliceFirstPage = sliceConfig.first_page;
-              if (typeof sliceConfig.page_label === 'string') slicePageLabel = sliceConfig.page_label;
-              if (typeof sliceConfig.title === 'string') sliceTitle = sliceConfig.title;
-              if (typeof sliceConfig.filename_pattern === 'string') sliceFilenamePattern = sliceConfig.filename_pattern;
-              if (typeof sliceConfig.link_mode === 'string') sliceLinkMode = sliceConfig.link_mode;
-            }
+            const u = new URL(file);
+            const name = u.pathname.split('/').pop() || '';
+            const sidecar = new URL(encodeURIComponent(decodeURIComponent(name)) + '.config.json', file).toString();
+            // Above can double-encode; safer rebuild: origin + dir + filename + '.config.json'
+            const dir = u.toString().replace(/[^/]+$/, '');
+            const decodedName = decodeURIComponent(name);
+            const sidecarUrl = dir + encodeURIComponent(decodedName + '.config.json');
+            const cfg = await fetchConfigJson(sidecarUrl);
+            if (cfg) fileConfig = cfg;
           } catch (_) {}
         }
         msg.textContent = 'Loading…';
@@ -265,6 +300,15 @@
                 for (let i = 0; i < labels.length; i++) {
                   const num = parseInt(String(labels[i]).replace(/[^0-9]/g, ''), 10);
                   if (num === desiredNum) { target = i + 1; break; }
+                }
+              }
+              // If non-slice config requests printed label display, use that for UI
+              if (!isSliceContext && fileConfig && fileConfig.page_label === 'printed') {
+                // Prefer the requested printed page value if provided; otherwise use label of target
+                const labelAtTarget = parseInt(String(labels[target-1]).replace(/[^0-9]/g, ''), 10);
+                if (Number.isFinite(labelAtTarget)) {
+                  printed = labelAtTarget; // reuse printed variable for display purposes
+                  usePrintedForDisplay = true;
                 }
               }
             }
@@ -312,6 +356,7 @@
             const last = u.pathname.split('/').pop() || '';
             let name = decodeURIComponent(last);
             if (isSliceContext && sliceTitle) name = sliceTitle;
+            if (!isSliceContext && fileConfig && typeof fileConfig.title === 'string') name = fileConfig.title;
             const labelPage = (usePrintedForDisplay && printed) ? printed : page;
             const label = section ? `${name} — Page ${labelPage} — Section: ${section}` : `${name} — Page ${labelPage}`;
             const srcEl = document.getElementById('source');
