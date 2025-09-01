@@ -199,7 +199,8 @@
         try {
           const dec = decodeURIComponent(file);
           const RULEBOOK_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule Book_2P V9.pdf';
-          const SLICE_BASE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule%20Book_2P%20V9/';
+          // Use decoded path (spaces) to match dec (already decodeURIComponent'ed)
+          const SLICE_BASE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule Book_2P V9/';
           const isFull = (dec === RULEBOOK_FULL);
           const isSlice = dec.startsWith(SLICE_BASE);
           if (isFull || isSlice) {
