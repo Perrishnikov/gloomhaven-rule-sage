@@ -6,17 +6,59 @@
     <title>PDF Viewer</title>
     <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
     <meta name="theme-color" content="#f8f9fa" media="(prefers-color-scheme: light)">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-      html, body { height: 100%; margin: 0; }
-      #container { display: flex; justify-content: center; padding: 10px; background: var(--bs-body-bg); }
-      #canvas { max-width: 100%; width: 100%; height: auto; background: rgba(0,0,0,.2); border-radius: .25rem; }
-      .src { max-width: min(60vw, 900px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .9; }
-      .msg { padding: 16px; }
+      /* Bootstrap-like theme variables and primitives */
+      :root {
+        --bg:#0b0d10;          /* body bg (dark) */
+        --fg:#e6e9ef;          /* body color (dark) */
+        --muted:#9aa4b2;       /* muted text */
+        --bar:#121417;         /* navbar bg */
+        --border:#20242a;      /* borders */
+        --accent:#6ea8fe;      /* primary */
+        --radius: .375rem;     /* bs border-radius */
+        --shadow-focus: 0 0 0 .25rem rgba(110,168,254,.25);
+      }
+      html[data-theme="light"] {
+        --bg:#f8f9fa;
+        --fg:#0b0d10;
+        --muted:#5c6673;
+        --bar:#ffffff;
+        --border:#e5e7eb;
+        --accent:#0d6efd;
+        --shadow-focus: 0 0 0 .25rem rgba(13,110,253,.25);
+      }
+      html, body { height:100%; margin:0; background:var(--bg); color:var(--fg); color-scheme: light dark; font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Helvetica, Arial, sans-serif; }
+
+      /* Navbar */
+      .bar { display:flex; align-items:center; gap:12px; padding:10px 12px; background:var(--bar); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:10; }
+      .brand { font-weight:600; white-space:nowrap; }
+      .src { flex:1; max-width:min(60vw, 900px); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.9; }
+      .controls { display:flex; align-items:center; gap:8px; }
+
+      /* Buttons (outline-secondary-ish) */
+      .btn { display:inline-block; padding:.375rem .75rem; border:1px solid var(--border); background:transparent; color:var(--fg); text-decoration:none; border-radius:var(--radius); cursor:pointer; transition: background-color .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease; }
+      .btn:hover { background:rgba(110,168,254,.08); border-color:color-mix(in oklab, var(--border), var(--accent) 25%); }
+      .btn:active { background:rgba(110,168,254,.16); }
+      .btn:focus-visible { outline:0; box-shadow: var(--shadow-focus); }
+      .btn.disabled, .btn[aria-disabled="true"] { opacity:.5; pointer-events:none; }
+
+      /* Page input mimics form-control */
+      .page { display:inline-flex; align-items:center; gap:6px; }
+      .page input { width:76px; padding:.375rem .5rem; border:1px solid var(--border); border-radius:var(--radius); background:transparent; color:var(--fg); }
+      .page input:focus-visible { outline:0; box-shadow: var(--shadow-focus); border-color: color-mix(in oklab, var(--border), var(--accent) 35%); }
+      .page input::-webkit-outer-spin-button,
+      .page input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      .page input[type=number] { -moz-appearance: textfield; }
+
+      /* Canvas container */
+      #container { display:flex; justify-content:center; padding:10px; background:var(--bg); }
+      #canvas { max-width:100%; width:100%; height:auto; background: rgba(0,0,0,.2); border-radius:var(--radius); }
+      .msg { padding:16px; color:var(--muted); }
+      a { color: var(--accent); }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js" referrerpolicy="no-referrer"></script>
     <script>
-      // Bootstrap theme: use dark by default; respect user/device if specified
+      // Theme: use dark by default; respect user/device if specified
       (function setTheme() {
         const root = document.documentElement;
         const mqDark = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
@@ -25,13 +67,13 @@
         let theme = 'dark';
         if (mqDark && mqDark.matches) theme = 'dark';
         else if (mqLight && mqLight.matches) theme = 'light';
-        root.setAttribute('data-bs-theme', theme);
+        root.setAttribute('data-theme', theme);
         try {
           mqDark && mqDark.addEventListener('change', e => {
-            root.setAttribute('data-bs-theme', e.matches ? 'dark' : (mqLight && mqLight.matches ? 'light' : 'dark'));
+            root.setAttribute('data-theme', e.matches ? 'dark' : (mqLight && mqLight.matches ? 'light' : 'dark'));
           });
           mqLight && mqLight.addEventListener('change', e => {
-            root.setAttribute('data-bs-theme', e.matches ? 'light' : (mqDark && mqDark.matches ? 'dark' : 'dark'));
+            root.setAttribute('data-theme', e.matches ? 'light' : (mqDark && mqDark.matches ? 'dark' : 'dark'));
           });
         } catch (_) {}
       })();
@@ -214,8 +256,12 @@
 
           // Update controls
           const displayPage = usePrintedForDisplay && printed ? printed : target;
-          document.getElementById('page').value = displayPage;
-          document.getElementById('total').textContent = total;
+          const displayTotal = isRulebookContext ? 82 : total;
+          const pageInputEl = document.getElementById('page');
+          pageInputEl.value = displayPage;
+          if (isRulebookContext) pageInputEl.setAttribute('max', '82');
+          else pageInputEl.removeAttribute('max');
+          document.getElementById('total').textContent = displayTotal;
 
           // Update source display: show filename, page and optional section
           try {
@@ -268,6 +314,15 @@
         if (pageInput) pageInput.addEventListener('change', (e) => {
           let p = parseInt(e.target.value, 10);
           if (!Number.isFinite(p) || p < 1) p = 1;
+          // Clamp for Rule Book slices to 1..82
+          const gp0 = getParams();
+          try {
+            const dec = decodeURIComponent(gp0.file || '');
+            const RB_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule Book_2P V9.pdf';
+            const RB_SLICE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule%20Book_2P%20V9/';
+            const isRB = (dec === RB_FULL) || dec.startsWith(RB_SLICE);
+            if (isRB) p = Math.max(1, Math.min(82, p));
+          } catch(_) {}
           setHashPage(p);
           const gp = getParams();
           render({ file: gp.file, page: p, section: gp.section, printed: gp.printed });
@@ -284,22 +339,14 @@
       });
     </script>
   </head>
-  <body class="bg-body text-body">
-    <nav class="navbar navbar-expand-lg border-bottom bg-body-tertiary sticky-top">
-      <div class="container-fluid gap-2">
-        <span class="navbar-brand">PDF Viewer</span>
-        <span id="source" class="src me-auto" title=""></span>
-        <div class="d-flex align-items-center gap-2">
-          <div class="btn-group" role="group" aria-label="Page navigation">
-            <a id="left" class="btn btn-outline-secondary" title="Previous page" href="#">◀ Previous</a>
-            <div class="input-group" style="width: 160px;">
-              <span class="input-group-text">Page</span>
-              <input id="page" class="form-control" type="number" min="1" step="1" value="1" />
-              <span class="input-group-text">/ <span id="total">?</span></span>
-            </div>
-            <a id="right" class="btn btn-outline-secondary" title="Next page" href="#">Next ▶</a>
-          </div>
-        </div>
+  <body>
+    <nav class="bar">
+      <span class="brand">PDF Viewer</span>
+      <span id="source" class="src" title=""></span>
+      <div class="controls">
+        <a id="left" class="btn" title="Previous page" href="#">◀ Previous</a>
+        <label class="page">Page <input id="page" type="number" min="1" step="1" value="1" /> / <span id="total">?</span></label>
+        <a id="right" class="btn" title="Next page" href="#">Next ▶</a>
       </div>
     </nav>
     <div id="msg" class="msg"></div>
