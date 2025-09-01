@@ -157,22 +157,23 @@
             return base + q + '#' + hParts.join('&');
           }
 
-          const prev = Math.max(1, (displayPage || 1) - 1);
-          const next = (displayPage || 1) + 1;
+          const current = Math.max(1, parseInt(displayPage, 10) || 1);
+          const prev = Math.max(1, current - 1);
+          const next = current + 1;
 
           // Set left anchor
           leftEl.href = hrefFor(prev);
-          const atStart = (displayPage || 1) <= 1;
+          const atStart = current <= 1;
           leftEl.classList.toggle('disabled', atStart);
           leftEl.setAttribute('aria-disabled', atStart ? 'true' : 'false');
 
           // Set right anchor
           let atEnd = false;
-          if (!isRulebook && Number.isFinite(total)) atEnd = (displayPage || 1) >= total;
+          if (!isRulebook && Number.isFinite(total)) atEnd = current >= total;
           // For rulebook slices, if printed known, optionally cap at 82
           if (isRulebook) {
             const MAX_PRINTED = 82;
-            atEnd = (displayPage || 1) >= MAX_PRINTED;
+            atEnd = current >= MAX_PRINTED;
           }
           rightEl.href = hrefFor(next);
           rightEl.classList.toggle('disabled', atEnd);
@@ -194,20 +195,32 @@
 
         // Auto-slice handling for Rule Book: treat #page as printed page
         let usePrintedForDisplay = false;
-        let isRulebookContext = false;
+        let isRulebookSliceContext = false;
         try {
           const dec = decodeURIComponent(file);
           const RULEBOOK_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule Book_2P V9.pdf';
           const SLICE_BASE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule%20Book_2P%20V9/';
           const isFull = (dec === RULEBOOK_FULL);
           const isSlice = dec.startsWith(SLICE_BASE);
-          if ((isFull || isSlice) && Number.isFinite(page)) {
-            const printedPage = printed || page; // treat incoming #page as printed page
+          if (isFull || isSlice) {
+            // Determine printed page:
+            // - If coming from full file: treat #page as printed page.
+            // - If coming from slice: parse p{N}.pdf if printed not supplied.
+            let printedPage = printed;
+            if (!Number.isFinite(printedPage)) {
+              if (isSlice) {
+                const m = dec.match(/\/p(\d+)\.pdf$/);
+                if (m) printedPage = parseInt(m[1], 10);
+              }
+            }
+            if (!Number.isFinite(printedPage)) {
+              printedPage = Number.isFinite(page) ? page : 1;
+            }
             file = `${SLICE_BASE}p${printedPage}.pdf`;
             page = 1; // slices are single-page
             printed = printedPage;
             usePrintedForDisplay = true;
-            isRulebookContext = true;
+            isRulebookSliceContext = true;
           }
         } catch (_) { /* ignore */ }
         msg.textContent = 'Loading…';
@@ -256,10 +269,10 @@
 
           // Update controls
           const displayPage = usePrintedForDisplay && printed ? printed : target;
-          const displayTotal = isRulebookContext ? 82 : total;
+          const displayTotal = isRulebookSliceContext ? 82 : total;
           const pageInputEl = document.getElementById('page');
           pageInputEl.value = displayPage;
-          if (isRulebookContext) pageInputEl.setAttribute('max', '82');
+          if (isRulebookSliceContext) pageInputEl.setAttribute('max', '82');
           else pageInputEl.removeAttribute('max');
           document.getElementById('total').textContent = displayTotal;
 
@@ -282,7 +295,7 @@
           }
 
           // Update smart nav anchors
-          setNavAnchors({ file, section, displayPage, total, printed, isRulebook: isRulebookContext });
+          setNavAnchors({ file, section, displayPage, total, printed, isRulebook: isRulebookSliceContext });
         } catch (e) {
           console.error(e);
           msg.innerHTML = 'Failed to load PDF. Ensure the URL is publicly accessible.\n' +
@@ -320,8 +333,8 @@
             const dec = decodeURIComponent(gp0.file || '');
             const RB_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/Rule Book_2P V9.pdf';
             const RB_SLICE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/by_page/slices/Rule%20Book_2P%20V9/';
-            const isRB = (dec === RB_FULL) || dec.startsWith(RB_SLICE);
-            if (isRB) p = Math.max(1, Math.min(82, p));
+            const isRBSlice = dec.startsWith(RB_SLICE);
+            if (isRBSlice) p = Math.max(1, Math.min(82, p));
           } catch(_) {}
           setHashPage(p);
           const gp = getParams();
