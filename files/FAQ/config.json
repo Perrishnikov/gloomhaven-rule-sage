@@ -1,0 +1,9 @@
+{
+  // Gloomhaven FAQ slices
+  "max_pages": 48,                // updated below
+  "first_page": 1,
+  "filename_pattern": "p{n}.pdf",
+  "page_label": "printed",      // show printed page number in viewer
+  "title": "Official FAQ — Gloomhaven (BGG)",
+  "link_mode": "slice"
+}

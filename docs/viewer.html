@@ -55,6 +55,7 @@
       #canvas { max-width:100%; width:100%; height:auto; background: rgba(0,0,0,.2); border-radius:var(--radius); }
       .msg { padding:16px; color:var(--muted); }
       a { color: var(--accent); }
+      /* No continuous mode; single-canvas render only */
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js" referrerpolicy="no-referrer"></script>
     <script>
@@ -172,7 +173,7 @@
       async function render({ file, page, section, printed }) {
         const msg = document.getElementById('msg');
         const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas ? canvas.getContext('2d') : null;
         if (!file) {
           msg.innerHTML = 'Missing \'file\' query param. Example: <code>viewer.html?file=' +
             encodeURIComponent('https://raw.githubusercontent.com/owner/repo/branch/path/to.pdf') + '#page=2</code>';
@@ -186,67 +187,34 @@
         let sliceBase = '';
         let sliceConfig = null;
         let fileConfig = null; // per-file (non-slice) sidecar config
-        try {
-          const dec = decodeURIComponent(file);
-          const RULEBOOK_FULL = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/Rule Book_2P V9/Rule Book_2P V9.pdf';
-          // New slice base (folder holds slices + config.json)
-          const RB_SLICE_BASE = 'https://raw.githubusercontent.com/Perrishnikov/gloomhaven-rule-sage/main/files/Rule Book_2P V9/';
-          const isFull = (dec === RULEBOOK_FULL);
-          const isRBslice = dec.startsWith(RB_SLICE_BASE);
-          if (isFull || isRBslice) {
-            // Determine printed page:
-            // - If coming from full file: treat #page as printed page.
-            // - If coming from slice: parse p{N}.pdf if printed not supplied.
-            let printedPage = printed;
-            if (!Number.isFinite(printedPage)) {
-              if (isRBslice) {
-                // Try config pattern first
-                try {
-                  const cfgUrl = new URL('config.json', RB_SLICE_BASE).toString();
-                  const cfg = await fetchConfigJson(cfgUrl);
-                  if (cfg) {
-                    const re = regexFromPattern(cfg.filename_pattern || 'p{n}.pdf');
-                    const m = dec.match(re);
-                    if (m) printedPage = parseInt(m[1], 10);
-                  }
-                } catch (_) {}
-                if (!Number.isFinite(printedPage)) {
-                  const m2 = dec.match(/\/p(\d+)\.pdf$/);
-                  if (m2) printedPage = parseInt(m2[1], 10);
-                }
-              }
-            }
-            if (!Number.isFinite(printedPage)) {
-              printedPage = Number.isFinite(page) ? page : 1;
-            }
-            // If config exists, honor filename_pattern
-            let targetName = 'p' + printedPage + '.pdf';
-            try {
-              const cfgUrl = new URL('config.json', RB_SLICE_BASE).toString();
-              const cfg = await fetchConfigJson(cfgUrl);
-              if (cfg) {
-                targetName = fileNameFromPattern(cfg.filename_pattern || 'p{n}.pdf', printedPage);
-              }
-            } catch (_) {}
-            file = RB_SLICE_BASE + targetName;
-            page = 1; // slices are single-page
-            printed = printedPage;
-            usePrintedForDisplay = true;
-            isSliceContext = true;
-            sliceBase = RB_SLICE_BASE;
-          }
-        } catch (_) { /* ignore */ }
 
-        // If current file is any slice under /files/by_page/slices/, derive sliceBase generically
-        try {
-          const u = new URL(file);
-          const path = decodeURIComponent(u.pathname);
-          if (path.includes('/files/by_page/slices/') || path.includes('/files/Rule Book_2P V9/')) {
-            const base = u.toString().replace(/[^/]+$/, ''); // keep trailing /
-            sliceBase = base;
-            isSliceContext = true;
-          }
-        } catch (_) {}
+        // Treat any folder with a config.json as a slice set (generic for Rule Book, FAQ, etc.)
+        if (file) {
+          try {
+            const u = new URL(file);
+            const dir = u.toString().replace(/[^/]+$/, '');
+            const cfgUrl = new URL('config.json', dir).toString();
+            const probe = await fetchConfigJson(cfgUrl);
+            if (probe && (probe.filename_pattern || probe.max_pages)) {
+              sliceBase = dir;
+              isSliceContext = true;
+              // Generic auto-slice: if current file is not already a slice, rewrite full file to slice filename using pattern
+              const last = decodeURIComponent(u.pathname.split('/').pop() || '');
+              const re = regexFromPattern(probe.filename_pattern || 'p{n}.pdf');
+              const m = last.match(re);
+              let printedPage = printed;
+              if (!Number.isFinite(printedPage)) {
+                if (m) { printedPage = parseInt(m[1], 10); }
+                else { printedPage = Number.isFinite(page) ? page : 1; }
+              }
+              const fname = fileNameFromPattern(probe.filename_pattern || 'p{n}.pdf', printedPage);
+              file = sliceBase + fname;
+              usePrintedForDisplay = true;
+              page = 1;
+              printed = printedPage;
+            }
+          } catch (_) {}
+        }
 
         // Try to load optional slice config (config.json) from the slice folder
         let sliceMaxPages = null;
@@ -314,27 +282,30 @@
             }
           } catch (_) { /* ignore label lookup issues */ }
 
-          const p = await pdf.getPage(target);
-          const viewport = p.getViewport({ scale: 1 });
+          {
+            // Single-canvas render (default)
+            const p = await pdf.getPage(target);
+            const viewport = p.getViewport({ scale: 1 });
 
-          // Fit to device width with some margin
-          const dpiScale = window.devicePixelRatio || 1;
-          const targetWidthCSS = Math.min(window.innerWidth - 20, 1200);
-          const scale = targetWidthCSS / viewport.width;
-          const v2 = p.getViewport({ scale });
+            // Fit to device width with some margin
+            const dpiScale = window.devicePixelRatio || 1;
+            const targetWidthCSS = Math.min(window.innerWidth - 20, 1200);
+            const scale = targetWidthCSS / viewport.width;
+            const v2 = p.getViewport({ scale });
 
-          canvas.width = Math.floor(v2.width * dpiScale);
-          canvas.height = Math.floor(v2.height * dpiScale);
-          canvas.style.width = Math.floor(v2.width) + 'px';
-          canvas.style.height = Math.floor(v2.height) + 'px';
+            canvas.width = Math.floor(v2.width * dpiScale);
+            canvas.height = Math.floor(v2.height * dpiScale);
+            canvas.style.width = Math.floor(v2.width) + 'px';
+            canvas.style.height = Math.floor(v2.height) + 'px';
 
-          // Cancel any in-flight render on the same canvas
-          if (currentRenderTask && typeof currentRenderTask.cancel === 'function') {
-            try { currentRenderTask.cancel(); } catch (_) {}
+            // Cancel any in-flight render on the same canvas
+            if (currentRenderTask && typeof currentRenderTask.cancel === 'function') {
+              try { currentRenderTask.cancel(); } catch (_) {}
+            }
+            currentRenderTask = p.render({ canvasContext: ctx, viewport: p.getViewport({ scale: scale * dpiScale }) });
+            try { await currentRenderTask.promise; } catch (_) { /* cancelled */ }
+            msg.textContent = '';
           }
-          currentRenderTask = p.render({ canvasContext: ctx, viewport: p.getViewport({ scale: scale * dpiScale }) });
-          try { await currentRenderTask.promise; } catch (_) { /* cancelled */ }
-          msg.textContent = '';
 
           // Update controls
           let displayPage = usePrintedForDisplay && printed ? printed : target;
