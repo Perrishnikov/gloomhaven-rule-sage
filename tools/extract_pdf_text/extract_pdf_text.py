@@ -20,10 +20,10 @@ Output: JSON Lines to stdout or a file with fields:
 
 Usage:
   # Default I/O (no args):
-  python tools/extract_rules/extract_rules.py
+  python tools/extract_pdf_text/extract_pdf_text.py
   
   # Custom paths:
-  python tools/extract_rules/extract_rules.py --input web/files --output tools/extract_rules/out/rules_index.jsonl
+  python tools/extract_pdf_text/extract_pdf_text.py --input web/files --output tools/extract_pdf_text/out/rules_index.jsonl
 
 Notes:
 - Requires PyMuPDF (pip install pymupdf).
@@ -259,8 +259,8 @@ def main() -> None:
     )
     ap.add_argument(
         "--output",
-        default="tools/extract_rules/out/rules_index.jsonl",
-        help="Output JSONL file (default: tools/extract_rules/out/rules_index.jsonl)",
+        default="tools/extract_pdf_text/out/rules_index.jsonl",
+        help="Output JSONL file (default: tools/extract_pdf_text/out/rules_index.jsonl)",
     )
     args = ap.parse_args()
 
