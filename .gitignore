@@ -1,0 +1,17 @@
+# Ignore everything
+/*
+
+# Except these folders/files
+!/chat
+!/docs
+!/tools
+!/web
+
+# Except this file
+# !.instructions.md
+# tools/.venv/
+# .venv/
+# venv/
+# env/
+!.gitignore
+.Makefile
