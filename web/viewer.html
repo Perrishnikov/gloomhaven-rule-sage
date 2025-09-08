@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gloomhaven Rule Citation Viewer</title>
+  <style>
+    :root { --bg:#0b0d10; --panel:#12161b; --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff; }
+    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif; }
+    .wrap { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; grid-template-rows: auto 1fr; height: 100%; }
+    header { grid-column: 1 / -1; padding: 10px 14px; border-bottom: 1px solid #20262d; background: #0f1318; display: flex; align-items: center; gap: 16px; }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    header .link { margin-left: auto; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .side { background: var(--panel); border-right: 1px solid #20262d; padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+    .side .meta { font-size: 12px; color: var(--muted); }
+    .side h2 { font-size: 15px; margin: 0 0 4px; }
+    .side pre { white-space: pre-wrap; word-break: break-word; background: #0f1318; border: 1px solid #20262d; padding: 10px; border-radius: 6px; color: var(--text); }
+    .pdf { height: 100%; width: 100%; background: #000; border: 0; }
+    .warn { color: #ffb86b; }
+    .err { color: #ff7b72; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill { display: inline-block; padding: 2px 8px; border: 1px solid #2a3139; border-radius: 999px; background: #0f1318; color: var(--muted); font-size: 12px; }
+    .small { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Gloomhaven Rule Citation</h1>
+      <div id="headerMeta" class="small"></div>
+      <div class="link"><a id="openDirect" href="#" target="_blank" rel="noopener">Open PDF ↗</a></div>
+    </header>
+    <aside class="side">
+      <div>
+        <div class="meta">Heading</div>
+        <h2 id="heading">—</h2>
+      </div>
+      <div>
+        <div class="meta">Snippet</div>
+        <pre id="snippet">—</pre>
+      </div>
+      <div>
+        <div class="meta">Source</div>
+        <div id="sourcePath" class="pill">—</div>
+      </div>
+      <div class="controls">
+        <a id="shareLink" class="pill" href="#">Copy Share Link</a>
+        <span id="status" class="small"></span>
+      </div>
+      <div class="small">
+        Tips: pass `file=files/pNN.pdf` or `p=NN`. Optional `heading=...` and `text=...` (URL encoded).
+      </div>
+    </aside>
+    <main>
+      <iframe id="pdfFrame" class="pdf" title="Rule Page"></iframe>
+    </main>
+  </div>
+
+  <script>
+    (function(){
+      const qs = new URLSearchParams(location.search);
+
+      function decodePlus(s){ try { return decodeURIComponent((s||'').replace(/\+/g,'%20')); } catch { return s||''; } }
+
+      function sanitizeFile(path){
+        // Allow only paths under files/ and block traversal
+        if(!path) return null;
+        if(path.startsWith('/')) path = path.slice(1);
+        if(path.startsWith('web/')) path = path.slice(4);
+        if(!path.startsWith('files/')) return null;
+        if(path.includes('..')) return null;
+        if(!/\.pdf$/i.test(path)) return null;
+        return path;
+      }
+
+      let file = decodePlus(qs.get('file'));
+      const p = qs.get('p');
+      if(!file && p){ file = `files/p${String(parseInt(p,10))}.pdf`; }
+      if(!file){
+        document.getElementById('status').textContent = 'Missing query: file=files/pNN.pdf or p=NN';
+        return;
+      }
+      file = sanitizeFile(file);
+      if(!file){
+        document.getElementById('status').textContent = 'Invalid file path. Must be under files/ and end with .pdf';
+        return;
+      }
+
+      const heading = decodePlus(qs.get('heading')) || '—';
+      const text = decodePlus(qs.get('text')) || '—';
+
+      // Compute relative link to serve PDFs from /web/files on GitHub Pages
+      const pdfUrl = file; // viewer is in /web, PDFs are in /web/files
+
+      const pdfFrame = document.getElementById('pdfFrame');
+      pdfFrame.src = pdfUrl;
+
+      document.getElementById('heading').textContent = heading;
+      document.getElementById('snippet').textContent = text;
+      document.getElementById('sourcePath').textContent = file;
+      document.getElementById('openDirect').href = pdfUrl;
+      document.getElementById('headerMeta').textContent = `[${file.replace(/^files\//,'')}]`;
+
+      const share = new URL(location.href);
+      share.search = new URLSearchParams({ file, heading, text }).toString();
+      const shareLink = document.getElementById('shareLink');
+      shareLink.href = share.toString();
+      shareLink.addEventListener('click', function(ev){
+        ev.preventDefault();
+        const toCopy = share.toString();
+        navigator.clipboard?.writeText(toCopy).then(()=>{
+          setStatus('Copied link');
+        }, ()=>{
+          setStatus('Copy failed');
+        });
+      });
+
+      function setStatus(msg){
+        const el = document.getElementById('status');
+        el.textContent = msg;
+        setTimeout(()=>{ el.textContent = ''; }, 1500);
+      }
+    })();
+  </script>
+</body>
+</html>
+
