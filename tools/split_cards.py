@@ -249,6 +249,20 @@ def export_card_pdf(
     out_doc.close()
 
 
+def export_card_png(
+    src_doc: fitz.Document,
+    pno: int,
+    clip_rect_pdf: fitz.Rect,
+    out_path: str,
+    dpi: int,
+):
+    zoom = dpi / 72.0
+    mat = fitz.Matrix(zoom, zoom)
+    page = src_doc[pno]
+    pix = page.get_pixmap(matrix=mat, alpha=False, clip=clip_rect_pdf)
+    pix.save(out_path)
+
+
 def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
 
@@ -266,6 +280,9 @@ def process_pdf(
     size_tol: float = 0.2,
     aspect_tol: float = 0.2,
     max_per_page: Optional[int] = None,
+    export_png_dir: Optional[str] = None,
+    png_dpi: int = 600,
+    export_pdf: bool = True,
 ):
     if not os.path.exists(input_path):
         raise FileNotFoundError(input_path)
@@ -327,11 +344,19 @@ def process_pdf(
             h = min(img_bgr.shape[0] - y, b.h + 2 * margin)
             clip_pdf = fitz.Rect(x / zoom, y / zoom, (x + w) / zoom, (y + h) / zoom)
 
-            out_path = os.path.join(
-                output_dir, f"{base_name}_p{pno+1:03d}_i{idx:02d}.pdf"
-            )
-            export_card_pdf(doc, pno, clip_pdf, out_path)
-            print(f"[ok] Wrote {out_path}")
+            if export_pdf:
+                out_path = os.path.join(
+                    output_dir, f"{base_name}_p{pno+1:03d}_i{idx:02d}.pdf"
+                )
+                export_card_pdf(doc, pno, clip_pdf, out_path)
+                print(f"[ok] Wrote {out_path}")
+            if export_png_dir:
+                ensure_dir(export_png_dir)
+                png_path = os.path.join(
+                    export_png_dir, f"{base_name}_p{pno+1:03d}_i{idx:02d}.png"
+                )
+                export_card_png(doc, pno, clip_pdf, png_path, dpi=png_dpi)
+                print(f"[ok] Wrote {png_path}")
 
     doc.close()
 
@@ -355,6 +380,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--margin", type=int, default=8, help="Margin (pixels at preview DPI) around detected box")
     ap.add_argument("--pages", default=None, help="Pages to process, e.g. '1-3,5,8'")
     ap.add_argument("--debug", action="store_true", help="Show debug windows with detections")
+    ap.add_argument("--export-png-dir", default=None, help="Also export each card as a PNG into this directory")
+    ap.add_argument("--png-dpi", type=int, default=600, help="DPI for PNG exports if enabled")
+    ap.add_argument("--no-export-pdf", dest="export_pdf", action="store_false", help="Do not export per-card PDFs (PNG only)")
     ap.add_argument("--enforce-uniform-size", action="store_true", help="Keep only boxes matching the card size learned from the first detected page")
     ap.add_argument("--size-tol", type=float, default=0.2, help="Relative area tolerance when enforcing uniform size (e.g., 0.2 = ±20%)")
     ap.add_argument("--aspect-tol", type=float, default=0.2, help="Absolute aspect ratio tolerance when enforcing uniform size")
@@ -377,6 +405,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             size_tol=args.size_tol,
             aspect_tol=args.aspect_tol,
             max_per_page=args.max_per_page,
+            export_png_dir=args.export_png_dir,
+            png_dpi=args.png_dpi,
+            export_pdf=args.export_pdf if hasattr(args, 'export_pdf') else True,
         )
 
     if args.debug:
