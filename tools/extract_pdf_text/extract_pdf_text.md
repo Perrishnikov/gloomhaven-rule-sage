@@ -5,7 +5,7 @@ Overview
 - Outputs JSONL rows for RAG indexing with fields: `source`, `page`, `heading`, `anchor`, `text`.
 
 Requirements
-- Python 3.9+
+- Python 3.11.9
 - PyMuPDF: `pip install pymupdf` (import as `pymupdf`; legacy alias `fitz` also works)
 
 Run
