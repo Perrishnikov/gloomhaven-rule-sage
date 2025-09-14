@@ -14,5 +14,5 @@
 # venv/
 # env/
 !.gitignore
-!.github/workflows/pages.yml
+!.github/
 !.python-version

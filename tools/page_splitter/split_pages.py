@@ -3,18 +3,21 @@
 Lossless page splitter for PDFs.
 
 Given an input file or directory, splits PDF(s) into single-page PDFs using
-pikepdf without re-rendering. Outputs to tools/page_splitter/out by default,
-under a subfolder named after the source file stem (to avoid collisions).
+pikepdf without re-rendering. Outputs to tools/page_splitter/out by default
+without creating a per-file subfolder.
 
 Usage:
-  # Single file → out/<stem>/p{n}.pdf
+  # Single file → out/p{n}.pdf
   python tools/page_splitter/split_pages.py --input web/files/ignored/RuleBook.pdf
 
-  # Directory of PDFs → each to its own subfolder in out/
+  # Directory of PDFs → all pages into out/ (may overwrite between files)
   python tools/page_splitter/split_pages.py --input web/files/ignored
 
   # Custom output directory
   python tools/page_splitter/split_pages.py --input web/files --out tools/page_splitter/out
+
+  # If you prefer the old behavior (per-file subfolders):
+  python tools/page_splitter/split_pages.py --input web/files/ignored --nested
 
 Notes:
 - Install dependencies:
@@ -111,7 +114,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Lossless PDF page splitter")
     ap.add_argument("--input", required=True, help="Input PDF file or directory containing PDFs to split")
     ap.add_argument("--out", default="tools/page_splitter/out", help="Output directory (default: tools/page_splitter/out)")
-    ap.add_argument("--flat", action="store_true", help="Do not create per-file subfolders; write p{n}.pdf in out")
+    ap.add_argument("--flat", dest="flat", action="store_true", help="Write p{n}.pdf directly in out (default)")
+    ap.add_argument("--nested", dest="flat", action="store_false", help="Create per-file subfolders under out")
+    # Default to flat output (no per-file subfolders)
+    ap.set_defaults(flat=True)
     ap.add_argument("--overwrite", action="store_true", help="Overwrite existing outputs if present")
     ap.add_argument("--verify", action="store_true", help="Verify each output opens with PyMuPDF")
     args = ap.parse_args()
